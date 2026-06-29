@@ -5,7 +5,7 @@ data deduplication, cleanup, review, and controlled data pipeline operations.
 
 The platform is separate from the earlier Hugging Face prototype, which remains
 available as the public
-[AyudaVenezuela2026 Hugging Face Space](https://huggingface.co/spaces/sergiopesch/ayudavenezuela2026)
+[AcopioVE Dedupe Demo Hugging Face Space](https://huggingface.co/spaces/sergiopesch/acopiove-dedupe-demo)
 for reference. This repository now contains both the architecture specification
 and the first hardened implementation foundation: FastAPI APIs, PostgreSQL
 models and migrations, approved source manifests, chunked ingestion,

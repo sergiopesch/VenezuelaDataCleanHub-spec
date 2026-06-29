@@ -241,8 +241,7 @@ Unique key:
 - Job status updates every phase.
 - Matching result under 30 minutes on a modest CPU worker for 100k records.
 
-## MVP Compatibility
+## Prototype Compatibility
 
-The first implementation should import the Hugging Face MVP manifests and
-matching rules so we can compare production output against known MVP output.
-
+The first implementation should import the initial deduplication prototype manifests and
+matching rules so we can compare production output against known prototype output.

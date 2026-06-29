@@ -2,13 +2,13 @@
 
 ## Executive Summary
 
-The production AcopioVE Data Hub should be a high-volume, auditable data
+The production VenezuelaDataCleanHub should be a high-volume, auditable data
 pipeline and deduplication service. It should accept authorized file uploads,
 JSON source manifests, public API pulls, and mobile-app submissions; normalize
 the data; compare records against a governed master database; produce
 duplicate/quality decisions; and route uncertain cases to human review.
 
-The Hugging Face MVP proved that the matching approach is useful. It should not
+The initial deduplication prototype proved that the matching approach is useful. It should not
 be the final production hub because long-running jobs, mobile-facing APIs,
 multi-user access control, observability, governance, and high-volume ingestion
 need a more durable backend.
@@ -28,14 +28,14 @@ need a more durable backend.
 ## Non-Goals
 
 - Do not let agents directly mutate master records without policy and audit.
-- Do not use Hugging Face Spaces as the primary production API gateway.
+- Do not use prototype hosting environments as the primary production API gateway.
 - Do not make LLMs the primary identity-matching authority.
 - Do not auto-merge sensitive person records without review policy.
 - Do not store raw secrets, API keys, or unrestricted personal data in git.
 
-## MVP Learnings That Shape This Architecture
+## Prototype Learnings That Shape This Architecture
 
-The Hugging Face MVP taught several important constraints:
+The initial deduplication prototype taught several important constraints:
 
 - Full public API volume is already above 100k records.
 - One full run promoted 106k+ records and produced 26k+ duplicate groups.
@@ -104,7 +104,7 @@ Downstream APIs, Export Jobs, Audit Reports, Mobile Responses
 
 ### Critical Design Rule
 
-Mobile apps should never call a Hugging Face Space directly for production
+Mobile apps should never call a prototype hosting environment directly for production
 dedupe. They should call this API layer, which queues work and returns a job ID.
 
 ## Layer 2: Identity, Authorization, and Policy
@@ -142,9 +142,9 @@ dedupe. They should call this API layer, which queues work and returns a job ID.
 - Prevent arbitrary SSRF or local-network access.
 - Define pagination, retry, throttling, and field mapping.
 
-### MVP Carryover
+### Prototype Carryover
 
-Keep the JSON manifest concept from the MVP, but move manifests into a governed
+Keep the JSON manifest concept from the prototype, but move manifests into a governed
 registry instead of treating every JSON input as trusted. Each manifest should
 be reviewed and versioned before it is executable.
 
@@ -180,7 +180,7 @@ be reviewed and versioned before it is executable.
 
 ### Why Temporal
 
-The MVP showed that full runs can take 20+ minutes and may fail due to remote
+The prototype showed that full runs can take 20+ minutes and may fail due to remote
 rate limits or output handling. A workflow engine is a better fit than a web
 request because it can retry, resume, record state, and expose progress.
 
@@ -493,7 +493,6 @@ Build the smallest production-shaped slice:
 
 ## Recommended Decision
 
-Proceed with a separate production platform repo. Keep Hugging Face as a demo,
-model-testing, and public transparency surface. Build the production API,
-workflow, and database backbone independently using open-source components.
-
+Proceed with a separate production platform repo. Keep prototype hosting for
+demos, model tests, and public transparency surfaces only. Build the production
+API, workflow, and database backbone independently using open-source components.

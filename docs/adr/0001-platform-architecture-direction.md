@@ -6,14 +6,14 @@ Proposed
 
 ## Context
 
-The Hugging Face MVP demonstrated that the deduplication approach works on real
+The initial deduplication prototype demonstrated that the deduplication approach works on real
 public API data. It also showed that a production service needs durable
 workflows, stronger access control, persistent operational storage, mobile-safe
 APIs, and better observability.
 
 ## Decision
 
-Build a separate open-source platform rather than extending the Hugging Face MVP
+Build a separate open-source platform rather than extending the initial deduplication prototype
 into the production backend.
 
 Use:
@@ -38,7 +38,7 @@ Positive:
 
 Negative:
 
-- More infrastructure than the MVP.
+- More infrastructure than the prototype.
 - Requires explicit operations discipline.
 - Requires schema design, migrations, and deployment automation.
 - OpenClaw integration must be carefully scoped to avoid unsafe automation.
@@ -50,4 +50,3 @@ Negative:
   Kubernetes, or self-hosted Kubernetes?
 - Should PostgreSQL use pgvector or should vectors live in Qdrant?
 - Which identity provider is preferred if Keycloak is too heavy initially?
-

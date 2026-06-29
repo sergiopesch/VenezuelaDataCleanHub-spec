@@ -1,9 +1,9 @@
-# AcopioVE Data Hub Platform Spec
+# VenezuelaDataCleanHub Platform Spec
 
 Architecture and product specification for a production-grade data deduplication,
 cleanup, review, and API service platform.
 
-This repository is intentionally separate from the Hugging Face MVP. The MVP
+This repository is intentionally separate from the initial deduplication prototype. The prototype
 proved the deduplication workflow and surfaced operational constraints. This
 spec defines the durable platform that should sit behind mobile apps, authorized
 operators, data pipelines, and controlled external integrations.
@@ -11,7 +11,7 @@ operators, data pipelines, and controlled external integrations.
 ## Documents
 
 - [Platform Architecture](docs/platform-architecture.md)
-- [MVP Learnings](docs/mvp-learnings.md)
+- [Prototype Learnings](docs/prototype-learnings.md)
 - [Security and Privacy Model](docs/security/security-and-privacy.md)
 - [OpenClaw Operations Model](docs/operations/openclaw-operations.md)
 - [Implementation Slice](docs/implementation-slice.md)
@@ -35,7 +35,7 @@ Build a separate open-source platform around:
 - OpenTelemetry, Prometheus, Grafana, and Loki for observability.
 - OpenClaw as the operational agent/control plane for authorized runbooks and incident workflows.
 
-Hugging Face remains useful for public demo, review UI, and model experiments,
+Prototype hosting remains useful for demos, review experiments, and model tests,
 but it should not be the production API boundary for Android/iOS traffic.
 
 ## Repo Status

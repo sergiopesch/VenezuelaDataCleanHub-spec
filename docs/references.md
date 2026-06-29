@@ -19,20 +19,18 @@ Primary references used to inform the architecture.
 - Polars documentation: https://docs.pola.rs/
 - OpenSearch documentation: https://opensearch.org/docs/
 
-## Local Project References
+## Local Tool References
 
-- Hugging Face MVP repo: `/home/sergiopesch/dedupe-acopiove`
 - OpenClaw repo: `/home/sergiopesch/openclaw`
 - OpenClaw state/config: `/home/sergiopesch/.openclaw`
 
-## MVP Evidence
+## Prototype Evidence
 
-The MVP demonstrated:
+The initial prototype demonstrated:
 
 - Full public API run above 100k records.
 - SOS API throttling requirement.
-- Persistent `/data` Hugging Face storage requirement.
+- Persistent storage requirement for long-running data products.
 - Need for staged image hashing and face-recognition jobs.
 - Need for human review queues.
 - Need for a production API and workflow layer separate from Gradio.
-

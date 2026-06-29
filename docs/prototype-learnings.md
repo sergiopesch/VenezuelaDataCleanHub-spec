@@ -1,6 +1,6 @@
-# MVP Learnings
+# Prototype Learnings
 
-The Hugging Face MVP was valuable because it tested real public APIs, real
+The initial deduplication prototype was valuable because it tested real public APIs, real
 volume, real throttling behavior, and the operational shape of duplicate review.
 
 ## Confirmed Volumes
@@ -12,7 +12,7 @@ The full public API run used these approximate source totals:
 - `venezuela_ayuda_missing`: 49,362 records
 - `venezuela_ayuda_checkin`: 168 records
 
-The Hugging Face run promoted:
+The prototype full run promoted:
 
 - 106,348 raw records
 - 106,342 normalized persons
@@ -46,4 +46,3 @@ The Hugging Face run promoted:
 - Gradio is useful for an operator/demo UI but not a production mobile API.
 - Long-running work needs Temporal or equivalent durable orchestration.
 - OpenClaw can help operations, but only through restricted APIs and runbooks.
-

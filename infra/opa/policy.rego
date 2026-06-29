@@ -28,7 +28,10 @@ allow if {
 
 allow if {
   input.actor.type == "agent"
-  startswith(input.operation, "ops.")
+  input.operation in {
+    "ops.runbook.start_approved_ingestion",
+    "ops.runbook.retry_job",
+  }
   "openclaw:runbook" in input.actor.scopes
 }
 

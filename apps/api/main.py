@@ -61,8 +61,15 @@ def manifest_response(session: Session, manifest: SourceManifestVersion) -> Sour
         source_slug=source.slug if source else "",
         version=manifest.version,
         approval_status=manifest.approval_status,
-        manifest_json=manifest.manifest_json,
+        manifest_json=redacted_manifest(manifest.manifest_json),
     )
+
+
+def redacted_manifest(manifest: dict) -> dict:
+    redacted = dict(manifest)
+    if isinstance(redacted.get("headers"), dict):
+        redacted["headers"] = {name: "[REDACTED]" for name in redacted["headers"]}
+    return redacted
 
 
 def job_response(job: Job) -> JobResponse:

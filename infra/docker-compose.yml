@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: vdch
       POSTGRES_PASSWORD: vdch
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vdch -d vdch"]
       interval: 5s
@@ -27,7 +27,7 @@ services:
       POSTGRES_PWD: vdch
       POSTGRES_SEEDS: postgres
     ports:
-      - "7233:7233"
+      - "127.0.0.1:7233:7233"
 
   temporal-ui:
     image: temporalio/ui:2.30.3
@@ -37,7 +37,7 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: http://localhost:3000
     ports:
-      - "8088:8080"
+      - "127.0.0.1:8088:8080"
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
@@ -46,8 +46,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
 
@@ -55,7 +55,7 @@ services:
     image: openpolicyagent/opa:0.70.0
     command: ["run", "--server", "--addr", "0.0.0.0:8181", "/policies"]
     ports:
-      - "8181:8181"
+      - "127.0.0.1:8181:8181"
     volumes:
       - ./opa:/policies:ro
 
@@ -66,7 +66,7 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
 
@@ -83,12 +83,15 @@ services:
         condition: service_started
     environment:
       VDCH_DATABASE_URL: postgresql+psycopg://vdch:vdch@postgres:5432/vdch
+      VDCH_DEV_AUTH_ENABLED: "true"
       VDCH_TEMPORAL_ENABLED: "true"
       VDCH_TEMPORAL_ADDRESS: temporal:7233
       VDCH_OPA_ENABLED: "true"
       VDCH_OPA_URL: http://opa:8181/v1/data/vdch/allow
+      VDCH_MANIFEST_HOST_ALLOWLIST: api.example.org
+      VDCH_FINGERPRINT_SECRET: replace-this-local-dev-secret
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   worker-temporal:
     build:
@@ -98,9 +101,12 @@ services:
       - api
     environment:
       VDCH_DATABASE_URL: postgresql+psycopg://vdch:vdch@postgres:5432/vdch
+      VDCH_DEV_AUTH_ENABLED: "true"
       VDCH_TEMPORAL_ADDRESS: temporal:7233
       VDCH_OPA_ENABLED: "true"
       VDCH_OPA_URL: http://opa:8181/v1/data/vdch/allow
+      VDCH_MANIFEST_HOST_ALLOWLIST: api.example.org
+      VDCH_FINGERPRINT_SECRET: replace-this-local-dev-secret
     command: ["python", "-m", "workers.temporal_worker"]
 
 volumes:

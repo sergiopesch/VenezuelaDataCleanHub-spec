@@ -19,6 +19,12 @@ async def get_actor(
     x_actor_type: str | None = Header(default=None),
     x_scopes: str | None = Header(default=None),
 ) -> Actor:
+    settings = get_settings()
+    if not settings.dev_auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication is not configured for this environment.",
+        )
     # Development auth boundary. Production deployments should put Keycloak/OIDC
     # verification in front of this dependency and keep the same Actor contract.
     actor = Actor(
@@ -46,7 +52,12 @@ async def check_policy(
 ) -> str:
     resolved_settings = settings or get_settings()
     if not resolved_settings.opa_enabled:
-        return "allow:local-policy-disabled"
+        if resolved_settings.allow_policy_bypass_for_local_dev:
+            return "allow:local-policy-disabled"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Policy enforcement is not configured for this environment.",
+        )
 
     payload = {
         "input": {

@@ -1,9 +1,11 @@
 import hashlib
+import hmac
 import json
 import re
 import unicodedata
 from typing import Any
 
+from vdch.config import get_settings
 from vdch.manifest import mapped_value
 
 
@@ -29,14 +31,25 @@ def fingerprint_digits(value: Any) -> str | None:
     digits = re.sub(r"\D", "", str(value))
     if not digits:
         return None
-    return hashlib.sha256(digits.encode()).hexdigest()
+    return keyed_fingerprint(digits)
 
 
 def fingerprint_url(value: Any) -> str | None:
     normalized = normalize_text(value)
     if not normalized:
         return None
-    return hashlib.sha256(normalized.encode()).hexdigest()
+    return keyed_fingerprint(normalized)
+
+
+def keyed_fingerprint(value: str) -> str:
+    settings = get_settings()
+    secret = settings.fingerprint_secret
+    if not secret:
+        if settings.allow_insecure_fingerprints_for_local_dev:
+            secret = "local-dev-insecure-fingerprint-secret"
+        else:
+            raise RuntimeError("VDCH_FINGERPRINT_SECRET is required for derived identifiers")
+    return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()
 
 
 def split_name(display_name: str | None) -> tuple[str | None, str | None]:
@@ -74,7 +87,7 @@ def build_person_fields(record: dict[str, Any], mappings: dict[str, str]) -> dic
         "normalized_name": normalized_name,
         "first_name": first_name,
         "last_name": last_name,
-        "cedula_display": str(cedula).strip() if cedula is not None else None,
+        "cedula_display": None,
         "cedula_fingerprint": fingerprint_digits(cedula),
         "phone_fingerprint": fingerprint_digits(phone),
         "photo_url": str(photo_url).strip() if photo_url is not None else None,

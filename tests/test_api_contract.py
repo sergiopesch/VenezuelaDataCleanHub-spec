@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from vdch.config import get_settings
 from vdch.db import get_session
 from vdch.models import DuplicateCandidate, DuplicateCluster, SourceManifestVersion
 from vdch.security import Actor
@@ -42,6 +43,94 @@ def test_create_manifest_endpoint(session):
     assert body["source_slug"] == "api-test"
     assert body["approval_status"] == "draft"
     assert session.get(SourceManifestVersion, body["id"]) is not None
+
+
+def test_auth_is_fail_closed_by_default(session, monkeypatch):
+    monkeypatch.setenv("VDCH_DEV_AUTH_ENABLED", "false")
+    monkeypatch.setenv("VDCH_ALLOW_POLICY_BYPASS_FOR_LOCAL_DEV", "false")
+    monkeypatch.setenv("VDCH_OPA_ENABLED", "false")
+    get_settings.cache_clear()
+
+    def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    client = TestClient(app)
+    try:
+        response = client.get("/v1/source-manifests")
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+    assert response.status_code == 401
+
+
+def test_policy_is_fail_closed_without_explicit_local_bypass(session, monkeypatch):
+    monkeypatch.setenv("VDCH_DEV_AUTH_ENABLED", "true")
+    monkeypatch.setenv("VDCH_ALLOW_POLICY_BYPASS_FOR_LOCAL_DEV", "false")
+    monkeypatch.setenv("VDCH_OPA_ENABLED", "false")
+    get_settings.cache_clear()
+
+    def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/v1/source-manifests",
+            headers={"X-Scopes": "operator"},
+            json={
+                "source_slug": "api-test",
+                "source_display_name": "API Test",
+                "owner": "data-team",
+                "manifest_json": {
+                    "type": "sample_json",
+                    "sample_records": [],
+                    "field_mappings": {"source_record_id": "id"},
+                },
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+    assert response.status_code == 503
+
+
+def test_manifest_response_redacts_headers(session):
+    manifest = create_source_manifest(
+        session,
+        payload=sample_manifest_payload().model_copy(
+            update={
+                "manifest_json": {
+                    "type": "sample_json",
+                    "sample_records": [],
+                    "headers": {"Authorization": "Bearer SECRET"},
+                    "field_mappings": {"source_record_id": "id"},
+                }
+            }
+        ),
+        actor=Actor("operator-1", "user", frozenset({"operator"})),
+        policy_decision="allow:test",
+    )
+    session.commit()
+
+    def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    client = TestClient(app)
+    try:
+        response = client.get(
+            f"/v1/source-manifests/{manifest.id}",
+            headers={"X-Scopes": "operator"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["manifest_json"]["headers"]["Authorization"] == "[REDACTED]"
 
 
 def test_duplicate_candidate_and_cluster_endpoints(session):

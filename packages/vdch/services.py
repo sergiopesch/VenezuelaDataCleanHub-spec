@@ -53,6 +53,7 @@ def create_source_manifest(
         validate_manifest(
             payload.manifest_json,
             allow_sample=resolved_settings.allow_sample_manifests,
+            approved_hosts=resolved_settings.approved_manifest_hosts,
         )
     except ManifestValidationError as exc:
         raise DomainError(str(exc)) from exc
@@ -248,6 +249,11 @@ def _records_from_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     if manifest["type"] == "sample_json":
         return list(manifest["sample_records"])
 
+    validate_manifest(
+        manifest,
+        allow_sample=False,
+        approved_hosts=get_settings().approved_manifest_hosts,
+    )
     response = httpx.get(
         manifest["base_url"],
         params=manifest.get("query_params") or {},
@@ -276,6 +282,11 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
             message="Completed job execution was skipped.",
         )
         return job
+    if job.status != "queued":
+        raise DomainError(
+            f"Job execution requires queued status; current status is {job.status}",
+            status.HTTP_409_CONFLICT,
+        )
     manifest_version = session.get(SourceManifestVersion, job.source_manifest_version_id)
     if manifest_version is None:
         raise DomainError("Job manifest version not found", status.HTTP_404_NOT_FOUND)

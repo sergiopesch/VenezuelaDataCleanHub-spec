@@ -1,3 +1,4 @@
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import urlparse
 
@@ -6,7 +7,64 @@ class ManifestValidationError(ValueError):
     pass
 
 
-def validate_manifest(manifest: dict[str, Any], *, allow_sample: bool) -> None:
+DISALLOWED_HEADER_NAMES = {
+    "authorization",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+}
+ALLOWED_HEADER_NAMES = {
+    "accept",
+    "user-agent",
+}
+
+
+def _validate_public_host(hostname: str | None) -> str:
+    if not hostname:
+        raise ManifestValidationError("base_url host is required")
+    normalized = hostname.lower().rstrip(".")
+    if normalized == "localhost":
+        raise ManifestValidationError("loopback hosts are not allowed")
+    try:
+        parsed_ip = ip_address(normalized)
+    except ValueError:
+        return normalized
+    if (
+        parsed_ip.is_private
+        or parsed_ip.is_loopback
+        or parsed_ip.is_link_local
+        or parsed_ip.is_multicast
+        or parsed_ip.is_reserved
+        or parsed_ip.is_unspecified
+    ):
+        raise ManifestValidationError("private or non-routable hosts are not allowed")
+    return normalized
+
+
+def _validate_headers(headers: Any) -> None:
+    if headers is None:
+        return
+    if not isinstance(headers, dict):
+        raise ManifestValidationError("manifest.headers must be an object")
+    for name, value in headers.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise ManifestValidationError("manifest.headers must contain string keys and values")
+        normalized_name = name.lower()
+        if normalized_name in DISALLOWED_HEADER_NAMES:
+            raise ManifestValidationError(f"manifest header is not allowed: {name}")
+        if normalized_name not in ALLOWED_HEADER_NAMES:
+            raise ManifestValidationError(f"manifest header is not approved: {name}")
+
+
+def validate_manifest(
+    manifest: dict[str, Any],
+    *,
+    allow_sample: bool,
+    approved_hosts: set[str] | None = None,
+) -> None:
     manifest_type = manifest.get("type")
     if manifest_type not in {"http_json", "sample_json"}:
         raise ManifestValidationError("manifest.type must be http_json or sample_json")
@@ -33,14 +91,19 @@ def validate_manifest(manifest: dict[str, Any], *, allow_sample: bool) -> None:
     parsed = urlparse(base_url)
     if parsed.scheme != "https":
         raise ManifestValidationError("http_json base_url must use https")
-    if parsed.hostname not in allowed_hosts:
+    hostname = _validate_public_host(parsed.hostname)
+    normalized_allowed_hosts = [_validate_public_host(str(host)) for host in allowed_hosts]
+    if hostname not in normalized_allowed_hosts:
         raise ManifestValidationError("base_url host must be in allowed_hosts")
-    if parsed.hostname in {"localhost", "127.0.0.1", "0.0.0.0"}:
-        raise ManifestValidationError("loopback hosts are not allowed")
+    if not approved_hosts:
+        raise ManifestValidationError("server-side manifest host allowlist is required")
+    if hostname not in approved_hosts:
+        raise ManifestValidationError("base_url host is not approved by server policy")
 
     method = manifest.get("method", "GET")
     if method != "GET":
         raise ManifestValidationError("milestone 1 only supports GET manifests")
+    _validate_headers(manifest.get("headers"))
 
 
 def get_by_path(payload: Any, path: str | None) -> Any:

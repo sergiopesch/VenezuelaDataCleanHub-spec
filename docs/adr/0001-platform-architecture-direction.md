@@ -45,7 +45,6 @@ Negative:
 
 ## Open Questions
 
-- Should the GitHub repo be public immediately or private until security review?
 - Which deployment target should be first: single VM Docker Compose, managed
   Kubernetes, or self-hosted Kubernetes?
 - Should PostgreSQL use pgvector or should vectors live in Qdrant?

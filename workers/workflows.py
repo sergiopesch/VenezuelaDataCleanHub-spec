@@ -30,5 +30,5 @@ class ApprovedManifestIngestionWorkflow:
             run_manifest_ingestion_activity,
             job_id,
             start_to_close_timeout=timedelta(minutes=45),
-            retry_policy=RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=1),
         )

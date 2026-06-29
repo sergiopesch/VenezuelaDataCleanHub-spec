@@ -11,6 +11,7 @@ from vdch.models import (
     ReviewCase,
     ReviewDecision,
 )
+from vdch.normalization import fingerprint_digits
 from vdch.schemas import SourceManifestCreate
 from vdch.security import Actor
 from vdch.services import (
@@ -262,6 +263,61 @@ def test_ingestion_job_events_record_lifecycle(session):
     assert "job.started" in {event.event_type for event in events}
     assert "job.completed" in {event.event_type for event in events}
     assert events[-1].phase == "completed"
+
+
+def test_failed_job_cannot_bypass_retry_control(session):
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type="user",
+        scopes=frozenset({"operator", "data_steward"}),
+    )
+    settings = Settings(database_url="sqlite:///:memory:", allow_sample_manifests=True)
+    manifest = create_source_manifest(
+        session,
+        payload=sample_manifest_payload(),
+        actor=actor,
+        policy_decision="allow:test",
+        settings=settings,
+    )
+    approve_manifest(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="test approval",
+    )
+    job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+    )
+    job.status = "failed"
+    session.flush()
+
+    try:
+        run_manifest_ingestion(session, job_id=job.id)
+    except Exception as exc:
+        assert "requires queued status" in str(exc)
+    else:
+        raise AssertionError("failed job execution should have been rejected")
+
+
+def test_fingerprints_require_secret_by_default(monkeypatch):
+    from vdch.config import get_settings
+
+    monkeypatch.delenv("VDCH_FINGERPRINT_SECRET", raising=False)
+    monkeypatch.setenv("VDCH_ALLOW_INSECURE_FINGERPRINTS_FOR_LOCAL_DEV", "false")
+    get_settings.cache_clear()
+
+    try:
+        fingerprint_digits("12345678")
+    except RuntimeError as exc:
+        assert "VDCH_FINGERPRINT_SECRET" in str(exc)
+    else:
+        raise AssertionError("fingerprint generation should require a secret")
+    finally:
+        get_settings.cache_clear()
 
 
 def test_review_decision_closes_case_and_snapshots_evidence(session):

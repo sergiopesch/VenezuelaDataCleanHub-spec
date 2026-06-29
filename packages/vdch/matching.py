@@ -4,6 +4,7 @@ from itertools import combinations
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from vdch.config import get_settings
 from vdch.models import (
     DuplicateCandidate,
     DuplicateCluster,
@@ -100,6 +101,8 @@ def create_duplicate_candidates(session: Session, *, source_id: str | None = Non
     pair_signals: dict[tuple[str, str], set[str]] = defaultdict(set)
     for (signal, _value), person_ids in blocks.items():
         if len(person_ids) < 2:
+            continue
+        if len(person_ids) > get_settings().max_match_block_size:
             continue
         for left_id, right_id in combinations(sorted(set(person_ids)), 2):
             pair = _pair_key(left_id, right_id)

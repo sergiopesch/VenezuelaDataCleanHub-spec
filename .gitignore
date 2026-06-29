@@ -1,0 +1,15 @@
+.DS_Store
+*.pyc
+__pycache__/
+.env
+.env.*
+!.env.example
+data/
+reports/
+*.duckdb
+*.sqlite
+*.db
+node_modules/
+.venv/
+dist/
+build/

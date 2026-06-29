@@ -40,5 +40,35 @@ but it should not be the production API boundary for Android/iOS traffic.
 
 ## Repo Status
 
-This is a planning/specification repo. No production code or sensitive data
-should be committed here.
+This repo now contains the first production-shaped foundation in addition to
+the architecture specification. The initial implementation slice includes:
+
+- FastAPI API service skeleton.
+- PostgreSQL SQLAlchemy models and Alembic migration.
+- Approved source manifest registry.
+- Durable ingestion workflow boundary with Temporal worker support.
+- Local background execution path for tests and early development.
+- Immutable raw records, derived person records, deterministic duplicate
+  candidates, review cases, decisions, and audit events.
+- Scoped OpenClaw operations bridge endpoints.
+- Docker Compose environment for Postgres, Temporal, MinIO, OPA, Keycloak, API,
+  and worker.
+
+No real sensitive data should be committed here.
+
+## Local Development
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest
+```
+
+To run the local service stack:
+
+```bash
+docker compose -f infra/docker-compose.yml up --build
+```
+
+See [Local Foundation](docs/development/local-foundation.md) for the first
+slice workflow and local service URLs.

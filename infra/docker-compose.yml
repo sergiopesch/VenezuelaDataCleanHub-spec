@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vdch
+      POSTGRES_USER: vdch
+      POSTGRES_PASSWORD: vdch
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vdch -d vdch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.25
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: vdch
+      POSTGRES_PWD: vdch
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.30.3
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8088:8080"
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  opa:
+    image: openpolicyagent/opa:0.70.0
+    command: ["run", "--server", "--addr", "0.0.0.0:8181", "/policies"]
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./opa:/policies:ro
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      opa:
+        condition: service_started
+    environment:
+      VDCH_DATABASE_URL: postgresql+psycopg://vdch:vdch@postgres:5432/vdch
+      VDCH_TEMPORAL_ENABLED: "true"
+      VDCH_TEMPORAL_ADDRESS: temporal:7233
+      VDCH_OPA_ENABLED: "true"
+      VDCH_OPA_URL: http://opa:8181/v1/data/vdch/allow
+    ports:
+      - "8000:8000"
+
+  worker-temporal:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      - api
+    environment:
+      VDCH_DATABASE_URL: postgresql+psycopg://vdch:vdch@postgres:5432/vdch
+      VDCH_TEMPORAL_ADDRESS: temporal:7233
+      VDCH_OPA_ENABLED: "true"
+      VDCH_OPA_URL: http://opa:8181/v1/data/vdch/allow
+    command: ["python", "-m", "workers.temporal_worker"]
+
+volumes:
+  postgres-data:
+  minio-data:

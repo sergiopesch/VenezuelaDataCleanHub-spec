@@ -66,8 +66,10 @@ def validate_manifest(
     approved_hosts: set[str] | None = None,
 ) -> None:
     manifest_type = manifest.get("type")
-    if manifest_type not in {"http_json", "sample_json"}:
-        raise ManifestValidationError("manifest.type must be http_json or sample_json")
+    if manifest_type not in {"http_json", "http_jsonl", "http_csv", "sample_json"}:
+        raise ManifestValidationError(
+            "manifest.type must be http_json, http_jsonl, http_csv, or sample_json"
+        )
 
     mappings = manifest.get("field_mappings")
     if not isinstance(mappings, dict) or "source_record_id" not in mappings:
@@ -80,6 +82,11 @@ def validate_manifest(
         if not isinstance(records, list):
             raise ManifestValidationError("sample_json manifests require sample_records list")
         return
+
+    if manifest_type == "http_csv":
+        delimiter = manifest.get("delimiter", ",")
+        if not isinstance(delimiter, str) or len(delimiter) != 1:
+            raise ManifestValidationError("http_csv delimiter must be a single character")
 
     base_url = manifest.get("base_url")
     allowed_hosts = manifest.get("allowed_hosts")

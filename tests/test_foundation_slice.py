@@ -1,5 +1,7 @@
+import httpx
 import pytest
 from sqlalchemy import select
+from vdch.adapters import AdapterError, HttpCsvAdapter, HttpJsonlAdapter, SampleJsonAdapter
 from vdch.config import Settings
 from vdch.models import (
     AuditEvent,
@@ -24,6 +26,7 @@ from vdch.services import (
     approve_manifest,
     create_ingestion_job,
     create_promotion_request,
+    create_retry_job,
     create_source_manifest,
     decide_review_case,
     run_manifest_ingestion,
@@ -409,6 +412,177 @@ def test_failed_job_cannot_bypass_retry_control(session):
         raise AssertionError("failed job execution should have been rejected")
 
 
+def test_retry_after_partial_failure_creates_child_job_without_chunk_collision(
+    session,
+    monkeypatch,
+):
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type="agent",
+        scopes=frozenset({"openclaw:runbook", "openclaw_operator_agent"}),
+    )
+    settings = Settings(database_url="sqlite:///:memory:", allow_sample_manifests=True)
+    manifest = create_source_manifest(
+        session,
+        payload=sample_manifest_payload(),
+        actor=Actor("operator-1", "user", frozenset({"operator"})),
+        policy_decision="allow:test",
+        settings=settings,
+    )
+    approve_manifest(
+        session,
+        manifest_id=manifest.id,
+        actor=Actor("steward-1", "user", frozenset({"data_steward"})),
+        policy_decision="allow:test",
+        reason="test approval",
+    )
+    failed_job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=Actor("operator-1", "user", frozenset({"operator"})),
+        policy_decision="allow:test",
+    )
+
+    import vdch.services as services
+
+    original_matching = services.create_duplicate_candidates
+
+    def fail_after_chunks(_session):
+        raise RuntimeError("synthetic matching failure")
+
+    monkeypatch.setattr("vdch.services.create_duplicate_candidates", fail_after_chunks)
+    with pytest.raises(RuntimeError):
+        run_manifest_ingestion(session, job_id=failed_job.id)
+    assert failed_job.status == "failed"
+    assert session.scalars(select(JobChunk).where(JobChunk.job_id == failed_job.id)).all()
+
+    monkeypatch.setattr("vdch.services.create_duplicate_candidates", original_matching)
+    retry_job = create_retry_job(
+        session,
+        failed_job_id=failed_job.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="Synthetic retry",
+        metadata={"request_id": "retry-request-1"},
+    )
+    run_manifest_ingestion(session, job_id=retry_job.id)
+    idempotent_retry = create_retry_job(
+        session,
+        failed_job_id=failed_job.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="Synthetic retry again",
+        metadata={"request_id": "retry-request-2"},
+    )
+    session.commit()
+
+    assert retry_job.parent_job_id == failed_job.id
+    assert retry_job.status == "completed"
+    assert idempotent_retry.id == retry_job.id
+    assert failed_job.status == "failed"
+    assert session.scalars(select(JobChunk).where(JobChunk.job_id == retry_job.id)).all()
+
+
+def test_sample_adapter_chunks_records_and_rejects_oversized_sources(monkeypatch):
+    from vdch.config import get_settings
+
+    monkeypatch.setenv("VDCH_INGESTION_CHUNK_SIZE", "2")
+    monkeypatch.setenv("VDCH_MAX_INGESTION_RECORDS", "3")
+    get_settings.cache_clear()
+    manifest = {
+        "type": "sample_json",
+        "sample_records": [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+        "field_mappings": {"source_record_id": "id"},
+    }
+
+    chunks = list(SampleJsonAdapter().fetch_chunks(manifest))
+
+    assert [chunk.sequence for chunk in chunks] == [1, 2]
+    assert [len(chunk.records) for chunk in chunks] == [2, 1]
+    assert chunks[1].checkpoint_json["offset"] == 2
+
+    manifest["sample_records"].append({"id": "d"})
+    with pytest.raises(AdapterError, match="record count exceeded"):
+        list(SampleJsonAdapter().fetch_chunks(manifest))
+    get_settings.cache_clear()
+
+
+def test_http_jsonl_and_csv_adapters_are_bounded_and_chunked(monkeypatch):
+    from vdch.config import get_settings
+
+    monkeypatch.setenv("VDCH_INGESTION_CHUNK_SIZE", "2")
+    monkeypatch.setenv("VDCH_MAX_INGESTION_RECORDS", "3")
+    get_settings.cache_clear()
+
+    def fake_head(*_args, **_kwargs):
+        return httpx.Response(200, headers={"content-length": "120"})
+
+    def fake_get(url, *_args, **_kwargs):
+        request = httpx.Request("GET", url)
+        if url.endswith(".jsonl"):
+            return httpx.Response(
+                200,
+                text='{"id":"a"}\n{"id":"b"}\n{"id":"c"}\n',
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            text="id,status\na,active\nb,missing\nc,active\n",
+            request=request,
+        )
+
+    monkeypatch.setattr("vdch.adapters.httpx.head", fake_head)
+    monkeypatch.setattr("vdch.adapters.httpx.get", fake_get)
+    base_manifest = {
+        "base_url": "https://api.example.org/records.jsonl",
+        "allowed_hosts": ["api.example.org"],
+        "field_mappings": {"source_record_id": "id", "status": "status"},
+    }
+
+    jsonl_chunks = list(
+        HttpJsonlAdapter(approved_hosts={"api.example.org"}).fetch_chunks(
+            {"type": "http_jsonl", **base_manifest}
+        )
+    )
+    csv_chunks = list(
+        HttpCsvAdapter(approved_hosts={"api.example.org"}).fetch_chunks(
+            {
+                "type": "http_csv",
+                **base_manifest,
+                "base_url": "https://api.example.org/records.csv",
+            }
+        )
+    )
+
+    assert [len(chunk.records) for chunk in jsonl_chunks] == [2, 1]
+    assert [len(chunk.records) for chunk in csv_chunks] == [2, 1]
+    assert csv_chunks[0].records[0]["status"] == "active"
+    assert jsonl_chunks[1].checkpoint_json["offset"] == 2
+    get_settings.cache_clear()
+
+
+def test_http_adapter_rejects_content_length_over_limit(monkeypatch):
+    from vdch.config import get_settings
+
+    monkeypatch.setenv("VDCH_MAX_HTTP_RESPONSE_BYTES", "10")
+    get_settings.cache_clear()
+
+    def fake_head(*_args, **_kwargs):
+        return httpx.Response(200, headers={"content-length": "11"})
+
+    monkeypatch.setattr("vdch.adapters.httpx.head", fake_head)
+    manifest = {
+        "type": "http_jsonl",
+        "base_url": "https://api.example.org/records.jsonl",
+        "allowed_hosts": ["api.example.org"],
+        "field_mappings": {"source_record_id": "id"},
+    }
+
+    with pytest.raises(AdapterError, match="content length exceeded"):
+        list(HttpJsonlAdapter(approved_hosts={"api.example.org"}).fetch_chunks(manifest))
+    get_settings.cache_clear()
+
+
 def test_fingerprints_require_secret_by_default(monkeypatch):
     from vdch.config import get_settings
 
@@ -558,6 +732,107 @@ def test_unparseable_records_go_to_quarantine_and_chunks(session):
     assert quarantine_records[0].payload_json_redacted["phone"] == "[REDACTED]"
     assert job.summary_json["quarantine_records_created"] == 1
     assert source.last_successful_job_id == job.id
+
+
+def test_redaction_is_deny_by_default_for_nested_sensitive_fields(session):
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type="user",
+        scopes=frozenset({"operator", "data_steward"}),
+    )
+    payload = sample_manifest_payload().model_copy(
+        update={
+            "sensitive_fields_json": {"safe_fields": ["status"]},
+            "manifest_json": {
+                "type": "sample_json",
+                "sample_records": [
+                    {
+                        "id": "nested-1",
+                        "name": "Synthetic Person",
+                        "cedula": "V-12345678",
+                        "phone_number": "0412 555 0000",
+                        "email": "synthetic@example.test",
+                        "status": "active",
+                        "profile": {
+                            "passport": "P1234567",
+                            "address_line": "Synthetic address",
+                            "photo_url": "https://example.test/photo.jpg?token=secret",
+                        },
+                    }
+                ],
+                "field_mappings": {
+                    "source_record_id": "id",
+                    "display_name": "name",
+                    "cedula": "cedula",
+                    "phone": "phone_number",
+                    "status": "status",
+                },
+            },
+        }
+    )
+    manifest = create_source_manifest(
+        session,
+        payload=payload,
+        actor=actor,
+        policy_decision="allow:test",
+        settings=Settings(database_url="sqlite:///:memory:", allow_sample_manifests=True),
+    )
+    approve_manifest(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="test approval",
+    )
+    job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+    )
+    run_manifest_ingestion(session, job_id=job.id)
+    redacted = session.scalar(select(RawRecord)).payload_json_redacted
+
+    assert redacted["status"] == "active"
+    assert "V-12345678" not in str(redacted)
+    assert "0412" not in str(redacted)
+    assert "synthetic@example.test" not in str(redacted)
+    assert "secret" not in str(redacted)
+    assert redacted["profile"]["passport"] == "[REDACTED]"
+
+
+def test_raw_records_are_immutable_through_orm(session):
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type="user",
+        scopes=frozenset({"operator", "data_steward"}),
+    )
+    manifest = create_source_manifest(
+        session,
+        payload=sample_manifest_payload(),
+        actor=actor,
+        policy_decision="allow:test",
+    )
+    approve_manifest(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="test approval",
+    )
+    job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+    )
+    run_manifest_ingestion(session, job_id=job.id)
+    raw = session.scalar(select(RawRecord))
+    raw.payload_json_redacted = {"status": "tampered"}
+
+    with pytest.raises(ValueError, match="Raw records are immutable"):
+        session.flush()
+    session.rollback()
 
 
 def test_review_decision_closes_case_and_snapshots_evidence(session):

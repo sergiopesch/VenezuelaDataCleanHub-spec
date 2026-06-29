@@ -1,0 +1,11 @@
+{
+  "actor": {
+    "type": "agent",
+    "scopes": ["data_steward", "openclaw:runbook", "openclaw_operator_agent"]
+  },
+  "operation": "source_manifest.approve",
+  "resource": {
+    "exists": true,
+    "source_status": "active"
+  }
+}

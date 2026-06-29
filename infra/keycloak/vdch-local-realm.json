@@ -4,9 +4,34 @@
   "clients": [
     {
       "clientId": "vdch-api",
+      "enabled": true,
+      "protocol": "openid-connect",
       "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
       "redirectUris": ["http://localhost:8000/*"],
       "webOrigins": ["http://localhost:8000"]
+    },
+    {
+      "clientId": "vdch-openclaw-agent",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "webOrigins": []
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-vdch-openclaw-agent",
+      "enabled": true,
+      "serviceAccountClientId": "vdch-openclaw-agent",
+      "realmRoles": ["openclaw_operator_agent"]
     }
   ],
   "roles": {

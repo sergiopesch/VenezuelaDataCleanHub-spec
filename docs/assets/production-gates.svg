@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="500" viewBox="0 0 1180 500" role="img" aria-labelledby="title desc">
+  <title id="title">Production hardening gates</title>
+  <desc id="desc">Production release gates for API surface, identity, policy, storage, eventing, exports, biometrics, and observability.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .gate { fill: #ffffff; stroke: #0f766e; stroke-width: 2; rx: 8; ry: 8; }
+    .hold { fill: #fff7ed; stroke: #ea580c; stroke-width: 2; rx: 8; ry: 8; }
+    .label { font: 600 17px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 13px Arial, sans-serif; fill: #334155; }
+    .edge { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1180" height="500"/>
+  <text class="label" x="40" y="42">Production hardening gates</text>
+  <text class="small" x="40" y="68">Each gate must pass before exposing sensitive humanitarian-style data workflows.</text>
+
+  <rect class="gate" x="60" y="120" width="220" height="80"/>
+  <text class="label" x="95" y="150">API surface</text>
+  <text class="small" x="82" y="174">Docs off, trusted hosts,</text>
+  <text class="small" x="82" y="192">bounded request bodies</text>
+
+  <rect class="gate" x="340" y="120" width="220" height="80"/>
+  <text class="label" x="390" y="150">OIDC</text>
+  <text class="small" x="365" y="174">RS256 JWKS, issuer,</text>
+  <text class="small" x="365" y="192">audience, expiry checks</text>
+
+  <rect class="gate" x="620" y="120" width="220" height="80"/>
+  <text class="label" x="665" y="150">OPA policy</text>
+  <text class="small" x="650" y="174">User-only approvals,</text>
+  <text class="small" x="650" y="192">agent-only ops</text>
+
+  <rect class="gate" x="900" y="120" width="220" height="80"/>
+  <text class="label" x="940" y="150">Data safety</text>
+  <text class="small" x="930" y="174">Redaction, immutable</text>
+  <text class="small" x="930" y="192">raw records, audit</text>
+
+  <rect class="hold" x="200" y="300" width="220" height="80"/>
+  <text class="label" x="235" y="330">Object storage</text>
+  <text class="small" x="225" y="354">Private buckets and</text>
+  <text class="small" x="225" y="372">short-lived signed URLs</text>
+
+  <rect class="hold" x="480" y="300" width="220" height="80"/>
+  <text class="label" x="535" y="330">Eventing</text>
+  <text class="small" x="510" y="354">Redpanda ACLs and</text>
+  <text class="small" x="510" y="372">safe event payloads</text>
+
+  <rect class="hold" x="760" y="300" width="220" height="80"/>
+  <text class="label" x="810" y="330">Sensitive features</text>
+  <text class="small" x="790" y="354">Exports and biometrics</text>
+  <text class="small" x="790" y="372">require human approval</text>
+
+  <path class="edge" d="M280 160 H340"/>
+  <path class="edge" d="M560 160 H620"/>
+  <path class="edge" d="M840 160 H900"/>
+  <path class="edge" d="M310 200 V300"/>
+  <path class="edge" d="M590 200 V300"/>
+  <path class="edge" d="M870 200 V300"/>
+</svg>

@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+import re
 from datetime import UTC
 from typing import Any
 from urllib.parse import urlparse
@@ -35,6 +35,31 @@ from vdch.schemas import SourceManifestCreate
 from vdch.security import Actor
 
 SAFE_JOB_FAILURE_MESSAGE = "Job failed; inspect error_code and internal diagnostics."
+DEFAULT_REDACTION_SAFE_FIELDS = frozenset({"status", "age", "location_general", "source_date"})
+SENSITIVE_KEYWORDS = frozenset(
+    {
+        "address",
+        "cedula",
+        "cédula",
+        "email",
+        "foto",
+        "image",
+        "license",
+        "name",
+        "note",
+        "passport",
+        "phone",
+        "photo",
+        "token",
+        "url",
+    }
+)
+SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"),
+    re.compile(r"\b(?:v|e)?[-.\s]*\d{7,10}\b", re.IGNORECASE),
+    re.compile(r"\b0?4\d{2}[-.\s]?\d{3}[-.\s]?\d{4}\b"),
+)
+AUDIT_FREEFORM_KEYS = frozenset({"reason", "runbook_reason", "review_notes", "note", "notes"})
 
 
 class DomainError(RuntimeError):
@@ -56,6 +81,7 @@ def create_source_manifest(
     actor: Actor,
     policy_decision: str,
     settings: Settings | None = None,
+    metadata: dict | None = None,
 ) -> SourceManifestVersion:
     resolved_settings = settings or get_settings()
     adapter_name = payload.adapter_name or adapter_name_for_manifest(payload.manifest_json)
@@ -133,7 +159,9 @@ def create_source_manifest(
         resource_type="source_manifest_version",
         resource_id=manifest.id,
         policy_decision=policy_decision,
-        metadata={"source_slug": source.slug, "version": manifest.version},
+        metadata=_safe_audit_metadata(
+            {"source_slug": source.slug, "version": manifest.version, **(metadata or {})}
+        ),
     )
     return manifest
 
@@ -145,6 +173,7 @@ def approve_manifest(
     actor: Actor,
     policy_decision: str,
     reason: str,
+    metadata: dict | None = None,
 ) -> SourceManifestVersion:
     manifest = session.get(SourceManifestVersion, manifest_id)
     if manifest is None:
@@ -180,7 +209,7 @@ def approve_manifest(
         resource_type="source_manifest_version",
         resource_id=manifest.id,
         policy_decision=policy_decision,
-        metadata={"reason": reason},
+        metadata=_safe_audit_metadata({"reason": reason, **(metadata or {})}),
     )
     return manifest
 
@@ -217,6 +246,7 @@ def update_source_status(
     reason: str,
     actor: Actor,
     policy_decision: str,
+    metadata: dict | None = None,
 ) -> Source:
     if new_status not in {"active", "disabled", "archived"}:
         raise DomainError("Invalid source status", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -231,7 +261,14 @@ def update_source_status(
         resource_type="source",
         resource_id=source.id,
         policy_decision=policy_decision,
-        metadata={"old_status": old_status, "new_status": new_status, "reason": reason},
+        metadata=_safe_audit_metadata(
+            {
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": reason,
+                **(metadata or {}),
+            }
+        ),
     )
     return source
 
@@ -311,9 +348,87 @@ def create_ingestion_job(
         resource_type="job",
         resource_id=job.id,
         policy_decision=policy_decision,
-        metadata=metadata or {"manifest_id": manifest.id},
+        metadata=_safe_audit_metadata({"manifest_id": manifest.id, **(metadata or {})}),
     )
     return job
+
+
+def create_retry_job(
+    session: Session,
+    *,
+    failed_job_id: str,
+    actor: Actor,
+    policy_decision: str,
+    reason: str,
+    metadata: dict | None = None,
+) -> Job:
+    failed_job = session.get(Job, failed_job_id)
+    if failed_job is None:
+        raise DomainError("Job not found", status.HTTP_404_NOT_FOUND)
+    if failed_job.status != "failed":
+        raise DomainError("Only failed jobs can be retried", status.HTTP_409_CONFLICT)
+    existing_retry = session.scalar(
+        select(Job)
+        .where(
+            Job.parent_job_id == failed_job.id,
+            Job.type == "approved_manifest_ingestion_retry",
+            Job.status.in_(["queued", "running", "completed"]),
+        )
+        .order_by(Job.created_at.desc())
+    )
+    if existing_retry is not None:
+        existing_retry._vdch_created = False
+        append_job_event(
+            session,
+            existing_retry,
+            event_type="job.retry_idempotent_reuse",
+            phase=existing_retry.progress_json.get("phase"),
+            message="Existing retry job returned for failed job.",
+            metadata=metadata or {},
+        )
+        return existing_retry
+
+    retry_job = Job(
+        type="approved_manifest_ingestion_retry",
+        status="queued",
+        requested_by=actor.actor_id,
+        idempotency_key=f"retry:{failed_job.id}",
+        source_manifest_version_id=failed_job.source_manifest_version_id,
+        parent_job_id=failed_job.id,
+        progress_json={"phase": "queued", "records_seen": 0},
+        summary_json={},
+    )
+    session.add(retry_job)
+    session.flush()
+    retry_job._vdch_created = True
+    append_job_event(
+        session,
+        failed_job,
+        event_type="job.retry_requested",
+        phase=failed_job.progress_json.get("phase"),
+        message="Retry job was created for failed job.",
+        metadata={"retry_job_id": retry_job.id, **(metadata or {})},
+    )
+    append_job_event(
+        session,
+        retry_job,
+        event_type="job.queued",
+        phase="queued",
+        message="Retry ingestion job queued.",
+        metadata={"failed_job_id": failed_job.id, **(metadata or {})},
+    )
+    write_audit_event(
+        session,
+        actor=actor,
+        operation="ops.runbook.retry_job",
+        resource_type="job",
+        resource_id=failed_job.id,
+        policy_decision=policy_decision,
+        metadata=_safe_audit_metadata(
+            {"retry_job_id": retry_job.id, "reason": reason, **(metadata or {})}
+        ),
+    )
+    return retry_job
 
 
 def append_job_event(
@@ -336,6 +451,7 @@ def append_job_event(
         phase=phase,
         message=message,
         metadata_json=metadata or {},
+        trace_id=(metadata or {}).get("request_id"),
     )
     session.add(event)
     return event
@@ -349,12 +465,86 @@ def list_job_events(session: Session, *, job_id: str) -> list[JobEvent]:
     )
 
 
-def _redact_record(record: dict[str, Any], sensitive_fields: Iterable[str]) -> dict[str, Any]:
-    redacted = dict(record)
-    for field in sensitive_fields:
-        if field in redacted:
-            redacted[field] = "[REDACTED]"
-    return redacted
+def _normalized_key(value: str) -> str:
+    return value.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _redaction_safe_fields(manifest_sensitive_fields: dict | None) -> set[str]:
+    configured = (manifest_sensitive_fields or {}).get("safe_fields", [])
+    if not isinstance(configured, list):
+        return set(DEFAULT_REDACTION_SAFE_FIELDS)
+    return {
+        _normalized_key(str(field))
+        for field in configured
+        if str(field).strip()
+    } | set(DEFAULT_REDACTION_SAFE_FIELDS)
+
+
+def _redaction_deny_fields(manifest_sensitive_fields: dict | None) -> set[str]:
+    configured = (manifest_sensitive_fields or {}).get("fields", [])
+    if not isinstance(configured, list):
+        return set()
+    return {_normalized_key(str(field)) for field in configured if str(field).strip()}
+
+
+def _is_sensitive_key(key: str, deny_fields: set[str]) -> bool:
+    normalized = _normalized_key(key)
+    if normalized in deny_fields:
+        return True
+    return any(keyword in normalized for keyword in SENSITIVE_KEYWORDS)
+
+
+def _is_sensitive_value(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    if "://" in value:
+        return True
+    return any(pattern.search(value) for pattern in SENSITIVE_VALUE_PATTERNS)
+
+
+def _redact_record(
+    record: dict[str, Any],
+    manifest_sensitive_fields: dict | None,
+) -> dict[str, Any]:
+    safe_fields = _redaction_safe_fields(manifest_sensitive_fields)
+    deny_fields = _redaction_deny_fields(manifest_sensitive_fields)
+
+    def redact(value: Any, key: str | None = None) -> Any:
+        if key and _is_sensitive_key(key, deny_fields):
+            return "[REDACTED]"
+        if isinstance(value, dict):
+            return {
+                str(child_key): redact(child_value, str(child_key))
+                for child_key, child_value in value.items()
+            }
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        if key and _normalized_key(key) in safe_fields and not _is_sensitive_value(value):
+            return value
+        return "[REDACTED]"
+
+    return redact(record)
+
+
+def _safe_audit_metadata(metadata: dict | None) -> dict:
+    def scrub(value: Any, key: str | None = None) -> Any:
+        normalized_key = _normalized_key(key or "")
+        if normalized_key in AUDIT_FREEFORM_KEYS:
+            return "[REDACTED]"
+        if key and _is_sensitive_key(key, set()):
+            return "[REDACTED]"
+        if isinstance(value, dict):
+            return {
+                str(child_key): scrub(child_value, str(child_key))
+                for child_key, child_value in value.items()
+            }
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if _is_sensitive_value(value):
+            return "[REDACTED]"
+        return value
+
+    return {str(key): scrub(value, str(key)) for key, value in (metadata or {}).items()}
 
 
 def _sample_payload_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -395,9 +585,9 @@ def _write_quarantine_record(
     source_record_id: str | None,
     reason_code: str,
     reason_message: str,
-    sensitive_fields: Iterable[str],
+    sensitive_policy: dict | None,
 ) -> QuarantineRecord:
-    redacted = _redact_record(record, sensitive_fields) if isinstance(record, dict) else {}
+    redacted = _redact_record(record, sensitive_policy) if isinstance(record, dict) else {}
     quarantine = QuarantineRecord(
         job_id=job.id,
         job_chunk_id=chunk.id if chunk else None,
@@ -535,6 +725,7 @@ def create_promotion_request(
     reason: str,
     actor: Actor,
     policy_decision: str,
+    metadata: dict | None = None,
 ) -> PromotionRequest:
     job = session.get(Job, job_id)
     if job is None:
@@ -568,7 +759,9 @@ def create_promotion_request(
         resource_type="promotion_request",
         resource_id=promotion.id,
         policy_decision=policy_decision,
-        metadata={"job_id": job.id, "status": promotion.status},
+        metadata=_safe_audit_metadata(
+            {"job_id": job.id, "status": promotion.status, "reason": reason, **(metadata or {})}
+        ),
     )
     return promotion
 
@@ -594,6 +787,7 @@ def decide_promotion_request(
     reason: str,
     actor: Actor,
     policy_decision: str,
+    metadata: dict | None = None,
 ) -> PromotionRequest:
     if decision not in {"approved", "rejected"}:
         raise DomainError("Invalid promotion decision", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -616,7 +810,14 @@ def decide_promotion_request(
         resource_type="promotion_request",
         resource_id=promotion.id,
         policy_decision=policy_decision,
-        metadata={"job_id": promotion.job_id, "decision": decision},
+        metadata=_safe_audit_metadata(
+            {
+                "job_id": promotion.job_id,
+                "decision": decision,
+                "reason": reason,
+                **(metadata or {}),
+            }
+        ),
     )
     return promotion
 
@@ -629,6 +830,7 @@ def resolve_quarantine_record(
     reason: str,
     actor: Actor,
     policy_decision: str,
+    metadata: dict | None = None,
 ) -> QuarantineRecord:
     if new_status not in {"resolved", "dismissed"}:
         raise DomainError("Invalid quarantine status", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -644,8 +846,8 @@ def resolve_quarantine_record(
             quarantine_record_id=quarantine.id,
             event_type=f"quarantine.{new_status}",
             actor_id=actor.actor_id,
-            message=reason,
-            metadata_json={"status": new_status},
+            message="Quarantine record status updated.",
+            metadata_json=_safe_audit_metadata({"status": new_status, "reason": reason}),
         )
     )
     write_audit_event(
@@ -655,7 +857,9 @@ def resolve_quarantine_record(
         resource_type="quarantine_record",
         resource_id=quarantine.id,
         policy_decision=policy_decision,
-        metadata={"status": new_status, "reason": reason},
+        metadata=_safe_audit_metadata(
+            {"status": new_status, "reason": reason, **(metadata or {})}
+        ),
     )
     return quarantine
 
@@ -668,6 +872,7 @@ def assign_review_case(
     reason: str,
     actor: Actor,
     policy_decision: str,
+    metadata: dict | None = None,
 ) -> ReviewCase:
     review_case = session.get(ReviewCase, review_case_id)
     if review_case is None:
@@ -683,7 +888,9 @@ def assign_review_case(
         resource_type="review_case",
         resource_id=review_case.id,
         policy_decision=policy_decision,
-        metadata={"assigned_to": assigned_to, "reason": reason},
+        metadata=_safe_audit_metadata(
+            {"assigned_to": assigned_to, "reason": reason, **(metadata or {})}
+        ),
     )
     return review_case
 
@@ -715,7 +922,7 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
         raise DomainError("Job source not found", status.HTTP_404_NOT_FOUND)
     manifest = manifest_version.manifest_json
     mappings = manifest_version.field_mappings_json or manifest["field_mappings"]
-    sensitive_fields = manifest_version.sensitive_fields_json.get("fields", [])
+    sensitive_policy = manifest_version.sensitive_fields_json or {}
     parser = get_parser(manifest_version.parser_name, manifest_version.parser_version)
     adapter = get_adapter(
         manifest_version.adapter_name,
@@ -741,12 +948,11 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
     session.flush()
 
     try:
-        chunks = list(adapter.fetch_chunks(manifest))
         raw_created = 0
         person_created = 0
         quarantine_created = 0
         records_seen = 0
-        for chunk_payload in chunks:
+        for chunk_payload in adapter.fetch_chunks(manifest):
             chunk = JobChunk(
                 job_id=job.id,
                 sequence=chunk_payload.sequence,
@@ -782,7 +988,7 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
                         source_record_id=None,
                         reason_code="invalid_record_type",
                         reason_message="Record is not a JSON object.",
-                        sensitive_fields=sensitive_fields,
+                        sensitive_policy=sensitive_policy,
                     )
                     quarantine_created += 1
                     chunk.quarantine_records_created += 1
@@ -799,7 +1005,7 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
                         source_record_id=None,
                         reason_code="parser_error",
                         reason_message=str(exc),
-                        sensitive_fields=sensitive_fields,
+                        sensitive_policy=sensitive_policy,
                     )
                     quarantine_created += 1
                     chunk.quarantine_records_created += 1
@@ -820,7 +1026,7 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
                         job_chunk_id=chunk.id,
                         source_url=manifest.get("base_url"),
                         payload_hash=stable_json_hash(record),
-                        payload_json_redacted=_redact_record(record, sensitive_fields),
+                        payload_json_redacted=_redact_record(record, sensitive_policy),
                     )
                     session.add(raw)
                     session.flush()
@@ -966,6 +1172,7 @@ def decide_review_case(
     reason: str,
     actor: Actor,
     policy_decision: str,
+    metadata: dict | None = None,
 ) -> ReviewDecision:
     review_case = session.get(ReviewCase, review_case_id)
     if review_case is None:
@@ -996,6 +1203,8 @@ def decide_review_case(
         resource_type="review_case",
         resource_id=review_case.id,
         policy_decision=policy_decision,
-        metadata={"decision": decision},
+        metadata=_safe_audit_metadata(
+            {"decision": decision, "reason": reason, **(metadata or {})}
+        ),
     )
     return review_decision

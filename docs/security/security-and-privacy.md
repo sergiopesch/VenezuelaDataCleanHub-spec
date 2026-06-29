@@ -23,6 +23,8 @@ governance.
 Use identity and policy layers:
 
 - Keycloak for user identity and service accounts.
+- OIDC/JWT verification for production API calls.
+- Local dev-header auth only when explicitly enabled for localhost development.
 - Open Policy Agent for authorization decisions.
 - PostgreSQL row-level security where useful.
 - Short-lived signed URLs for upload/download.
@@ -48,8 +50,9 @@ service accounts and restricted internal APIs.
 Allowed agent actions:
 
 - Create an ingestion job from an approved manifest.
+- Create or reuse a child retry job for a failed ingestion job.
 - Check job status.
-- Summarize logs.
+- Summarize safe counters and diagnostics.
 - Draft reports.
 - Open GitHub issues.
 - Notify operators.
@@ -59,8 +62,11 @@ Restricted agent actions:
 - Promote a run without human approval.
 - Delete data.
 - Export raw records.
+- Read raw payloads or unredacted manifest samples.
 - Enable face recognition.
 - Change source policies.
+- Approve source manifests.
+- Merge identities or mutate canonical master records.
 - Modify role assignments.
 
 ## Audit Events
@@ -94,9 +100,11 @@ Record:
 - Manifest review and versioning.
 - No arbitrary headers/secrets in user-provided manifests.
 - Queue-based jobs with idempotency.
+- Child retry jobs that preserve failed job history.
+- Deny-by-default payload redaction and safe manifest summaries.
+- Bounded pagination for list endpoints.
 - Role-scoped exports.
 - Safe reports by default.
 - Data retention policies.
 - Explicit human approval for sensitive workflows.
 - Prompt-injection safe agent design: source data is untrusted content.
-

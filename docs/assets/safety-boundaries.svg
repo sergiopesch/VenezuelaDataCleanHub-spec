@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="540" viewBox="0 0 1180 540" role="img" aria-labelledby="title desc">
+  <title id="title">Safety boundaries</title>
+  <desc id="desc">Safety boundaries around raw data, derived records, review, promotion, OpenClaw, and future master records.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .raw { fill: #fee2e2; stroke: #dc2626; stroke-width: 2; rx: 8; ry: 8; }
+    .safe { fill: #ecfdf5; stroke: #059669; stroke-width: 2; rx: 8; ry: 8; }
+    .review { fill: #eef2ff; stroke: #4f46e5; stroke-width: 2; rx: 8; ry: 8; }
+    .ops { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 2; rx: 8; ry: 8; }
+    .future { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; stroke-dasharray: 7 5; rx: 8; ry: 8; }
+    .label { font: 600 18px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 14px Arial, sans-serif; fill: #334155; }
+    .edge { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    .blocked { stroke: #dc2626; stroke-width: 2; stroke-dasharray: 8 6; fill: none; marker-end: url(#arrow-red); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1180" height="540"/>
+  <text class="label" x="40" y="42">Safety boundaries and control points</text>
+  <text class="small" x="40" y="68">Raw data stays immutable. Promotions and sensitive operations require explicit user approval and audit.</text>
+
+  <rect class="raw" x="70" y="130" width="220" height="90"/>
+  <text class="label" x="105" y="165">Raw records</text>
+  <text class="small" x="102" y="190">Immutable, redacted view</text>
+
+  <rect class="safe" x="380" y="130" width="220" height="90"/>
+  <text class="label" x="420" y="165">Derived records</text>
+  <text class="small" x="410" y="190">HMAC identity tokens</text>
+
+  <rect class="review" x="690" y="130" width="220" height="90"/>
+  <text class="label" x="735" y="165">Review queue</text>
+  <text class="small" x="720" y="190">Human duplicate decisions</text>
+
+  <rect class="review" x="690" y="310" width="220" height="90"/>
+  <text class="label" x="725" y="345">Promotion ledger</text>
+  <text class="small" x="718" y="370">Audited steward approval</text>
+
+  <rect class="future" x="970" y="310" width="160" height="90"/>
+  <text class="label" x="1005" y="345">Master DB</text>
+  <text class="small" x="995" y="370">Future explicit path</text>
+
+  <rect class="ops" x="70" y="310" width="220" height="90"/>
+  <text class="label" x="105" y="345">OpenClaw ops</text>
+  <text class="small" x="95" y="370">Runbooks and diagnostics</text>
+
+  <path class="edge" d="M290 175 H380"/>
+  <path class="edge" d="M600 175 H690"/>
+  <path class="edge" d="M800 220 V310"/>
+  <path class="edge" d="M910 355 H970"/>
+  <path class="edge" d="M290 355 C415 355 525 215 690 190"/>
+  <path class="edge" d="M290 355 H690"/>
+  <path class="blocked" d="M290 330 C520 245 800 245 970 330"/>
+  <path class="blocked" d="M180 310 V220"/>
+  <text class="small" x="385" y="480" fill="#dc2626">Blocked: OpenClaw cannot approve sources, merge identities, export raw payloads, mutate biometrics, or bypass OPA.</text>
+</svg>

@@ -15,6 +15,7 @@ def write_audit_event(
     metadata: dict | None = None,
     trace_id: str | None = None,
 ) -> AuditEvent:
+    resolved_metadata = metadata or {}
     event = AuditEvent(
         actor_type=actor.actor_type,
         actor_id=actor.actor_id,
@@ -22,8 +23,8 @@ def write_audit_event(
         resource_type=resource_type,
         resource_id=resource_id,
         policy_decision=policy_decision,
-        metadata_json=metadata or {},
-        trace_id=trace_id,
+        metadata_json=resolved_metadata,
+        trace_id=trace_id or resolved_metadata.get("request_id"),
     )
     session.add(event)
     return event

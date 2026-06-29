@@ -236,7 +236,7 @@ identifiers, HMAC tokens, raw payloads, or source secrets.
 
 The following remain staged production work unless explicitly implemented:
 
-- full OIDC/JWT verification at the API boundary
+- deployment-specific Keycloak realm hardening and OIDC/JWKS configuration
 - signed file uploads and object-storage snapshots
 - CSV/JSONL/file adapters
 - Redpanda/Kafka event streaming

@@ -1,0 +1,11 @@
+{
+  "actor": {
+    "type": "agent",
+    "scopes": ["openclaw:runbook", "openclaw_operator_agent"]
+  },
+  "operation": "ops.runbook.start_approved_ingestion",
+  "resource": {
+    "approval_status": "approved",
+    "source_status": "active"
+  }
+}

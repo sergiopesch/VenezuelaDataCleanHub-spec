@@ -83,6 +83,11 @@ services:
         condition: service_started
     environment:
       VDCH_DATABASE_URL: postgresql+psycopg://vdch:vdch@postgres:5432/vdch
+      VDCH_ENVIRONMENT: local
+      VDCH_API_DOCS_ENABLED: "true"
+      VDCH_TRUSTED_HOSTS: localhost,127.0.0.1,api
+      # Localhost-only developer auth. Production must use VDCH_AUTH_MODE=oidc.
+      VDCH_AUTH_MODE: dev_headers
       VDCH_DEV_AUTH_ENABLED: "true"
       VDCH_TEMPORAL_ENABLED: "true"
       VDCH_TEMPORAL_ADDRESS: temporal:7233
@@ -101,6 +106,9 @@ services:
       - api
     environment:
       VDCH_DATABASE_URL: postgresql+psycopg://vdch:vdch@postgres:5432/vdch
+      VDCH_ENVIRONMENT: local
+      # Localhost-only developer auth. Production must use VDCH_AUTH_MODE=oidc.
+      VDCH_AUTH_MODE: dev_headers
       VDCH_DEV_AUTH_ENABLED: "true"
       VDCH_TEMPORAL_ADDRESS: temporal:7233
       VDCH_OPA_ENABLED: "true"

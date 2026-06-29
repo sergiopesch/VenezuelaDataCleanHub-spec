@@ -1,9 +1,13 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class SourceManifestCreate(BaseModel):
+class StrictRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceManifestCreate(StrictRequestModel):
     source_slug: str = Field(min_length=2, max_length=120)
     source_display_name: str = Field(min_length=2, max_length=240)
     owner: str = Field(min_length=2, max_length=240)
@@ -50,9 +54,15 @@ class SourceResponse(BaseModel):
     last_failed_job_id: str | None = None
 
 
-class SourceStatusUpdateRequest(BaseModel):
+class SourceStatusUpdateRequest(StrictRequestModel):
     status: Literal["active", "disabled", "archived"]
     reason: str = Field(min_length=3, max_length=500)
+
+
+class PaginationMeta(BaseModel):
+    limit: int
+    offset: int
+    total: int
 
 
 class SourceManifestResponse(BaseModel):
@@ -68,14 +78,24 @@ class SourceManifestResponse(BaseModel):
     parser_name: str
     parser_version: str
     adapter_name: str
-    manifest_json: dict[str, Any]
+    manifest_summary: dict[str, Any]
 
 
-class ApproveManifestRequest(BaseModel):
+class SourceListResponse(BaseModel):
+    items: list[SourceResponse]
+    meta: PaginationMeta
+
+
+class SourceManifestListResponse(BaseModel):
+    items: list[SourceManifestResponse]
+    meta: PaginationMeta
+
+
+class ApproveManifestRequest(StrictRequestModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
-class CreateIngestionJobRequest(BaseModel):
+class CreateIngestionJobRequest(StrictRequestModel):
     source_manifest_version_id: str
     idempotency_key: str | None = Field(default=None, max_length=120)
 
@@ -84,6 +104,7 @@ class JobResponse(BaseModel):
     id: str
     type: str
     status: str
+    parent_job_id: str | None = None
     idempotency_key: str | None = None
     attempt_count: int
     progress_json: dict[str, Any]
@@ -100,6 +121,7 @@ class JobEventResponse(BaseModel):
     phase: str | None = None
     message: str | None = None
     metadata_json: dict[str, Any]
+    trace_id: str | None = None
     created_at: str
 
 
@@ -118,12 +140,22 @@ class JobChunkResponse(BaseModel):
     error_message: str | None = None
 
 
-class ReviewDecisionRequest(BaseModel):
+class JobEventListResponse(BaseModel):
+    items: list[JobEventResponse]
+    meta: PaginationMeta
+
+
+class JobChunkListResponse(BaseModel):
+    items: list[JobChunkResponse]
+    meta: PaginationMeta
+
+
+class ReviewDecisionRequest(StrictRequestModel):
     decision: Literal["confirm_duplicate", "reject_duplicate", "insufficient_data", "escalate"]
     reason: str = Field(min_length=3, max_length=2000)
 
 
-class ReviewAssignmentRequest(BaseModel):
+class ReviewAssignmentRequest(StrictRequestModel):
     assigned_to: str = Field(min_length=2, max_length=240)
     reason: str = Field(min_length=3, max_length=500)
 
@@ -138,12 +170,17 @@ class ReviewCaseResponse(BaseModel):
     priority: int
 
 
-class PromotionCreateRequest(BaseModel):
+class ReviewCaseListResponse(BaseModel):
+    items: list[ReviewCaseResponse]
+    meta: PaginationMeta
+
+
+class PromotionCreateRequest(StrictRequestModel):
     job_id: str = Field(min_length=1, max_length=36)
     reason: str = Field(min_length=3, max_length=2000)
 
 
-class PromotionDecisionRequest(BaseModel):
+class PromotionDecisionRequest(StrictRequestModel):
     decision: Literal["approved", "rejected"]
     reason: str = Field(min_length=3, max_length=2000)
 
@@ -159,6 +196,11 @@ class PromotionResponse(BaseModel):
     created_at: str
 
 
+class PromotionListResponse(BaseModel):
+    items: list[PromotionResponse]
+    meta: PaginationMeta
+
+
 class QuarantineRecordResponse(BaseModel):
     id: str
     job_id: str
@@ -171,7 +213,12 @@ class QuarantineRecordResponse(BaseModel):
     created_at: str
 
 
-class QuarantineResolveRequest(BaseModel):
+class QuarantineRecordListResponse(BaseModel):
+    items: list[QuarantineRecordResponse]
+    meta: PaginationMeta
+
+
+class QuarantineResolveRequest(StrictRequestModel):
     status: Literal["resolved", "dismissed"]
     reason: str = Field(min_length=3, max_length=1000)
 
@@ -211,12 +258,18 @@ class DuplicateClusterDetailResponse(DuplicateClusterResponse):
     members: list[PersonRecordSummary]
 
 
-class OpsStartApprovedIngestionRequest(BaseModel):
+class DuplicateClusterListResponse(BaseModel):
+    items: list[DuplicateClusterResponse]
+    meta: PaginationMeta
+
+
+class OpsStartApprovedIngestionRequest(StrictRequestModel):
     source_manifest_version_id: str
     runbook_reason: str = Field(min_length=3, max_length=500)
 
 
-class OpsRetryJobRequest(BaseModel):
+class OpsRetryJobRequest(StrictRequestModel):
+    job_id: str = Field(min_length=1, max_length=36)
     reason: str = Field(min_length=3, max_length=500)
 
 

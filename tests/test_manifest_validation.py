@@ -90,6 +90,32 @@ def test_http_manifest_requires_server_side_host_approval():
         validate_manifest(manifest, allow_sample=True, approved_hosts={"other.example.org"})
 
 
+def test_http_csv_and_jsonl_manifests_use_same_host_and_header_controls():
+    jsonl_manifest = {
+        "type": "http_jsonl",
+        "base_url": "https://api.example.org/records.jsonl",
+        "allowed_hosts": ["api.example.org"],
+        "field_mappings": {"source_record_id": "id"},
+    }
+    csv_manifest = {
+        "type": "http_csv",
+        "base_url": "https://api.example.org/records.csv",
+        "allowed_hosts": ["api.example.org"],
+        "delimiter": ",",
+        "field_mappings": {"source_record_id": "id"},
+    }
+    invalid_csv_manifest = {**csv_manifest, "delimiter": "::"}
+
+    validate_manifest(jsonl_manifest, allow_sample=True, approved_hosts={"api.example.org"})
+    validate_manifest(csv_manifest, allow_sample=True, approved_hosts={"api.example.org"})
+    with pytest.raises(ManifestValidationError, match="single character"):
+        validate_manifest(
+            invalid_csv_manifest,
+            allow_sample=True,
+            approved_hosts={"api.example.org"},
+        )
+
+
 def test_sample_manifest_can_be_disabled():
     manifest = {
         "type": "sample_json",

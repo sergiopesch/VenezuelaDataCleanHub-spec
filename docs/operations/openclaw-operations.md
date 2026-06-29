@@ -38,6 +38,11 @@ Operations Bridge API
 OpenClaw should call the Operations Bridge. The bridge enforces identity,
 policy, scopes, and audit logging.
 
+In production, OpenClaw must authenticate as an OIDC service-account actor with
+agent identity. Header-based actor assertion is available only in explicit local
+development mode. A caller cannot become OpenClaw by sending `X-Actor-Type` or
+`X-Scopes` when `VDCH_AUTH_MODE=oidc`.
+
 ## Runbooks
 
 Initial runbooks:
@@ -56,8 +61,15 @@ Initial runbooks:
 
 - Read-only diagnostics: agent can run directly.
 - Low-risk job creation: agent can run if manifest is approved.
+- Failed-job retry: agent creates or reuses a child retry job; it does not reset
+  the failed job in place.
 - Promotion/export: human approval required.
 - Deletion, source policy changes, face recognition: data steward approval required.
+
+OpenClaw is blocked from source approval, source policy or status mutation,
+identity mutation, merge decisions, promotions, exports, raw payload reads, and
+biometric controls. Those actions require user identities and explicit policy
+checks.
 
 ## Logging and Audit
 
@@ -67,9 +79,23 @@ Every OpenClaw action should include:
 - Session ID.
 - User who requested action.
 - Tool/runbook invoked.
+- Approval ID when the runbook depends on prior human approval.
 - API endpoint called.
 - Result.
-- Trace ID.
+- Request ID or trace ID.
+
+The API accepts these as audit context headers where applicable:
+
+- `X-Request-ID`
+- `X-OpenClaw-Agent-ID`
+- `X-OpenClaw-Session-ID`
+- `X-Invoking-User-ID`
+- `X-Runbook-ID`
+- `X-Approval-ID`
+
+These headers are for audit correlation only. Authorization still comes from the
+signed actor identity, scopes, resource-aware OPA policy, and the approved source
+or job state.
 
 ## OpenAI Credits
 
@@ -83,4 +109,3 @@ Use OpenAI credits through OpenClaw for operational reasoning:
 
 Do not use OpenAI calls for unredacted raw sensitive data unless the governance
 policy explicitly allows it.
-

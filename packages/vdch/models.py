@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -85,6 +85,7 @@ class Job(Base):
     source_manifest_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("source_manifest_versions.id"), index=True
     )
+    parent_job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id"), index=True)
     input_object_uri: Mapped[str | None] = mapped_column(Text)
     progress_json: Mapped[dict] = mapped_column(JsonType, default=dict)
     summary_json: Mapped[dict] = mapped_column(JsonType, default=dict)
@@ -106,6 +107,7 @@ class JobEvent(Base):
     phase: Mapped[str | None] = mapped_column(String(80), index=True)
     message: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict] = mapped_column(JsonType, default=dict)
+    trace_id: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -146,6 +148,11 @@ class RawRecord(Base):
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     payload_json_redacted: Mapped[dict] = mapped_column(JsonType, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+@event.listens_for(RawRecord, "before_update")
+def prevent_raw_record_update(*_args) -> None:
+    raise ValueError("Raw records are immutable")
 
 
 class PersonRecord(Base):

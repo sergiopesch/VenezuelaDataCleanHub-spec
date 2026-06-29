@@ -40,11 +40,35 @@ jobs:
 
       - name: Test
         env:
+          VDCH_ENVIRONMENT: "local"
+          VDCH_AUTH_MODE: "dev_headers"
           VDCH_DEV_AUTH_ENABLED: "true"
           VDCH_ALLOW_POLICY_BYPASS_FOR_LOCAL_DEV: "true"
           VDCH_OPA_ENABLED: "false"
           VDCH_FINGERPRINT_SECRET: "ci-synthetic-fingerprint-secret"
         run: pytest
+
+      - name: Security checks
+        run: python scripts/security_checks.py
+
+      - name: OPA policy checks
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work:ro" \
+            -w /work \
+            openpolicyagent/opa:0.70.0 eval \
+            --fail \
+            --data infra/opa/policy.rego \
+            --input tests/opa_inputs/openclaw_start_allow.json \
+            'data.vdch.allow == true'
+          docker run --rm \
+            -v "${{ github.workspace }}:/work:ro" \
+            -w /work \
+            openpolicyagent/opa:0.70.0 eval \
+            --fail \
+            --data infra/opa/policy.rego \
+            --input tests/opa_inputs/agent_manifest_approve_deny.json \
+            'data.vdch.allow == false'
 
       - name: Verify migrations
         env:

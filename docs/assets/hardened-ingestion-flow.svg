@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-labelledby="title desc">
+  <title id="title">Hardened ingestion and review flow</title>
+  <desc id="desc">A sequence-style diagram from manifest creation through ingestion, matching, quarantine, review, and promotion request.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .lane { stroke: #cbd5e1; stroke-width: 2; stroke-dasharray: 6 8; }
+    .step { fill: #ffffff; stroke: #0f766e; stroke-width: 2; rx: 8; ry: 8; }
+    .guard { fill: #fefce8; stroke: #ca8a04; stroke-width: 2; rx: 8; ry: 8; }
+    .store { fill: #fff7ed; stroke: #ea580c; stroke-width: 2; rx: 8; ry: 8; }
+    .label { font: 600 17px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 13px Arial, sans-serif; fill: #334155; }
+    .edge { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1180" height="520"/>
+  <text class="label" x="40" y="42">Hardened ingestion flow</text>
+  <text class="small" x="40" y="68">Approved source manifests, bounded adapters, immutable raw records, deterministic matching, audited review.</text>
+
+  <line class="lane" x1="90" y1="120" x2="90" y2="465"/>
+  <line class="lane" x1="310" y1="120" x2="310" y2="465"/>
+  <line class="lane" x1="530" y1="120" x2="530" y2="465"/>
+  <line class="lane" x1="750" y1="120" x2="750" y2="465"/>
+  <line class="lane" x1="970" y1="120" x2="970" y2="465"/>
+  <text class="label" x="50" y="105">User</text>
+  <text class="label" x="260" y="105">API</text>
+  <text class="label" x="480" y="105">Policy</text>
+  <text class="label" x="700" y="105">Worker</text>
+  <text class="label" x="920" y="105">Database</text>
+
+  <rect class="step" x="35" y="135" width="140" height="55"/>
+  <text class="small" x="55" y="160">Create source</text>
+  <text class="small" x="55" y="178">manifest</text>
+  <path class="edge" d="M175 163 H245"/>
+  <rect class="guard" x="245" y="135" width="150" height="55"/>
+  <text class="small" x="265" y="160">Validate schema</text>
+  <text class="small" x="265" y="178">and host policy</text>
+  <path class="edge" d="M395 163 H465"/>
+  <rect class="guard" x="465" y="135" width="150" height="55"/>
+  <text class="small" x="488" y="160">OPA create</text>
+  <text class="small" x="488" y="178">decision</text>
+  <path class="edge" d="M615 163 H895"/>
+  <rect class="store" x="895" y="135" width="150" height="55"/>
+  <text class="small" x="920" y="160">Draft version</text>
+  <text class="small" x="920" y="178">and audit event</text>
+
+  <rect class="step" x="35" y="230" width="140" height="55"/>
+  <text class="small" x="55" y="255">Approve</text>
+  <text class="small" x="55" y="273">manifest</text>
+  <path class="edge" d="M175 258 H465"/>
+  <rect class="guard" x="465" y="230" width="150" height="55"/>
+  <text class="small" x="488" y="255">User-only</text>
+  <text class="small" x="488" y="273">steward check</text>
+  <path class="edge" d="M615 258 H895"/>
+  <rect class="store" x="895" y="230" width="150" height="55"/>
+  <text class="small" x="915" y="255">Approved version</text>
+  <text class="small" x="915" y="273">with audit trail</text>
+
+  <rect class="step" x="245" y="325" width="150" height="55"/>
+  <text class="small" x="265" y="350">Create queued job</text>
+  <text class="small" x="265" y="368">or child retry</text>
+  <path class="edge" d="M395 353 H675"/>
+  <rect class="step" x="675" y="325" width="150" height="55"/>
+  <text class="small" x="695" y="350">Bounded adapter</text>
+  <text class="small" x="695" y="368">JSON / JSONL / CSV</text>
+  <path class="edge" d="M825 353 H895"/>
+  <rect class="store" x="895" y="325" width="150" height="55"/>
+  <text class="small" x="913" y="350">Immutable raw</text>
+  <text class="small" x="913" y="368">and quarantine</text>
+
+  <rect class="step" x="675" y="420" width="150" height="55"/>
+  <text class="small" x="695" y="445">Deterministic</text>
+  <text class="small" x="695" y="463">matching</text>
+  <path class="edge" d="M825 448 H895"/>
+  <rect class="store" x="895" y="420" width="150" height="55"/>
+  <text class="small" x="913" y="445">Review queue</text>
+  <text class="small" x="913" y="463">promotion ledger</text>
+</svg>

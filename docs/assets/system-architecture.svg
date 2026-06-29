@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">VenezuelaDataCleanHub system architecture</title>
+  <desc id="desc">High-level architecture showing clients, OpenClaw, FastAPI, policy, workflow, storage, workers, events, and observability.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .band { fill: #e0f2fe; stroke: #0284c7; stroke-width: 2; }
+    .core { fill: #ecfdf5; stroke: #059669; stroke-width: 2; }
+    .data { fill: #fff7ed; stroke: #ea580c; stroke-width: 2; }
+    .ops { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 2; }
+    .box { rx: 8; ry: 8; }
+    .label { font: 600 18px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 14px Arial, sans-serif; fill: #334155; }
+    .edge { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    .blocked { stroke: #dc2626; stroke-width: 2; stroke-dasharray: 8 6; fill: none; marker-end: url(#arrow-red); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1180" height="620"/>
+  <text class="label" x="40" y="44">VenezuelaDataCleanHub production-shaped architecture</text>
+  <text class="small" x="40" y="70">Stable APIs, explicit policy, durable workflows, immutable raw records, safe operations bridge.</text>
+
+  <rect class="band box" x="40" y="115" width="220" height="80"/>
+  <text class="label" x="72" y="150">Mobile apps</text>
+  <text class="small" x="72" y="174">Android / iOS APIs</text>
+
+  <rect class="band box" x="40" y="230" width="220" height="80"/>
+  <text class="label" x="72" y="265">Operators</text>
+  <text class="small" x="72" y="289">Reviewers and stewards</text>
+
+  <rect class="band box" x="40" y="345" width="220" height="80"/>
+  <text class="label" x="72" y="380">External systems</text>
+  <text class="small" x="72" y="404">Approved API clients</text>
+
+  <rect class="ops box" x="40" y="460" width="220" height="80"/>
+  <text class="label" x="72" y="495">OpenClaw agent</text>
+  <text class="small" x="72" y="519">Scoped ops only</text>
+
+  <rect class="core box" x="390" y="230" width="250" height="105"/>
+  <text class="label" x="442" y="270">FastAPI backend</text>
+  <text class="small" x="430" y="296">OIDC auth, OPA policy</text>
+  <text class="small" x="430" y="318">bounded request contracts</text>
+
+  <rect class="core box" x="390" y="90" width="250" height="80"/>
+  <text class="label" x="430" y="125">Keycloak / OIDC</text>
+  <text class="small" x="430" y="150">Users and service accounts</text>
+
+  <rect class="core box" x="390" y="385" width="250" height="80"/>
+  <text class="label" x="455" y="420">OPA</text>
+  <text class="small" x="430" y="445">Resource-aware decisions</text>
+
+  <rect class="core box" x="740" y="95" width="250" height="80"/>
+  <text class="label" x="790" y="130">Temporal</text>
+  <text class="small" x="785" y="155">Durable workflow state</text>
+
+  <rect class="data box" x="740" y="220" width="250" height="80"/>
+  <text class="label" x="780" y="255">PostgreSQL</text>
+  <text class="small" x="775" y="280">Operational source of truth</text>
+
+  <rect class="data box" x="740" y="345" width="250" height="80"/>
+  <text class="label" x="792" y="380">Object storage</text>
+  <text class="small" x="785" y="405">Files, reports, snapshots</text>
+
+  <rect class="core box" x="740" y="470" width="250" height="80"/>
+  <text class="label" x="780" y="505">Workers</text>
+  <text class="small" x="770" y="530">Ingestion, matching, review</text>
+
+  <rect class="ops box" x="1030" y="220" width="120" height="80"/>
+  <text class="label" x="1050" y="255">Events</text>
+  <text class="small" x="1044" y="280">Redpanda</text>
+
+  <rect class="ops box" x="1030" y="345" width="120" height="80"/>
+  <text class="label" x="1040" y="380">Telemetry</text>
+  <text class="small" x="1048" y="405">OTel safe</text>
+
+  <path class="edge" d="M260 155 C310 155 330 260 390 260"/>
+  <path class="edge" d="M260 270 H390"/>
+  <path class="edge" d="M260 385 C310 385 330 305 390 305"/>
+  <path class="edge" d="M260 500 C325 500 330 330 390 330"/>
+  <path class="edge" d="M515 230 V170"/>
+  <path class="edge" d="M515 335 V385"/>
+  <path class="edge" d="M640 270 H740"/>
+  <path class="edge" d="M640 295 C690 295 690 135 740 135"/>
+  <path class="edge" d="M865 175 V220"/>
+  <path class="edge" d="M865 300 V345"/>
+  <path class="edge" d="M865 425 V470"/>
+  <path class="edge" d="M990 260 H1030"/>
+  <path class="edge" d="M990 385 H1030"/>
+  <path class="blocked" d="M260 500 C530 600 835 590 865 550"/>
+  <text class="small" x="345" y="575" fill="#dc2626">OpenClaw cannot bypass policy, mutate identity, or read raw payloads</text>
+</svg>

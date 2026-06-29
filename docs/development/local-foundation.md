@@ -8,6 +8,15 @@ This repository now contains the first production-shaped implementation slice.
 docker compose -f infra/docker-compose.yml up --build
 ```
 
+The local Compose stack uses `VDCH_AUTH_MODE=dev_headers` with
+`VDCH_DEV_AUTH_ENABLED=true`. This is deliberately unsafe outside localhost:
+clients can self-assert `X-Actor-ID`, `X-Actor-Type`, and `X-Scopes`. Production
+and shared environments should use `VDCH_AUTH_MODE=oidc` with issuer, audience,
+and JWKS verification configured, must set `VDCH_ENVIRONMENT=production`, should
+set `VDCH_TRUSTED_HOSTS`, and must keep dev-header auth disabled. In production,
+OpenAPI docs are disabled by default unless `VDCH_API_DOCS_ENABLED=true` is set
+intentionally behind an access-controlled route.
+
 Useful services:
 
 - API: <http://localhost:8000/docs>
@@ -36,13 +45,16 @@ The executable path is:
     unsafe-record review without exposing raw payloads.
 13. Promotion requests capture explicit, audited data-steward approval before
     any future master-data mutation path is added.
-14. OpenClaw uses scoped `/v1/ops/*` endpoints only.
+14. OpenClaw uses scoped `/v1/ops/*` endpoints only, as an authenticated agent.
+15. List endpoints use bounded pagination with `limit` and `offset`.
 
 `sample_json` manifests are intended for local development and tests. Real API
-sources should use `http_json` with `https` URLs and explicit host allowlists.
+sources should use bounded HTTPS adapters with explicit host allowlists:
+`http_json`, `http_jsonl`, or `http_csv`.
 Approved manifests also carry fixed `adapter_name` and `parser_name` values.
-The current registry supports `sample_inline`, `http_json`, and
-`person_json_v1`; manifests cannot select arbitrary executable code.
+The current registry supports `sample_inline`, `http_json`, `http_jsonl`,
+`http_csv`, and `person_json_v1`; manifests cannot select arbitrary executable
+code.
 
 Source approval requires a recorded `permission_basis`. Source metadata stores
 trust tier, source type, allowed domains, default rate limits, review owner,
@@ -85,10 +97,20 @@ Records that cannot be parsed are written to quarantine with a redacted payload
 snapshot and reason code. Missing identity-token secrets still fail the job
 instead of producing unsafe derived records.
 
+Payload redaction is deny-by-default. Only manifest `safe_fields` plus a small
+default set of non-identifying operational fields are retained; likely
+identifiers, contacts, URLs, image references, notes, nested sensitive keys, and
+values matching identifier patterns are redacted even when a manifest is
+incomplete.
+
 Job failure responses expose `error_code` plus a generic safe failure message.
 Job event responses mask failed-event details and redact free-form runbook
 reasons so exception text cannot leak raw identifiers, payloads, or source
 secrets through diagnostics APIs.
+
+OpenClaw retry runbooks create or reuse child retry jobs rather than resetting a
+failed job in place. This preserves the failed job history and avoids collisions
+with chunk sequence constraints created during partial failures.
 
 ## Promotion Boundary
 
@@ -114,3 +136,20 @@ OpenClaw endpoints are agent-scoped and return safe counters or status only:
 
 Diagnostics intentionally omit raw payloads, manifest bodies, HMAC tokens,
 source secrets, and free-form job error messages.
+
+The retry runbook request body includes the failed `job_id` and a free-form
+reason. The reason is not stored in audit metadata verbatim.
+
+OpenClaw callers should provide audit context headers when available:
+
+- `X-Request-ID`
+- `X-OpenClaw-Agent-ID`
+- `X-OpenClaw-Session-ID`
+- `X-Invoking-User-ID`
+- `X-Runbook-ID`
+- `X-Approval-ID`
+
+These values are copied into audit metadata and job event trace fields where
+applicable. They are identifiers for operational audit correlation, not
+authorization inputs; authorization still comes from the signed actor identity,
+scopes, and OPA policy.

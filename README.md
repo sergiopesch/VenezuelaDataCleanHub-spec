@@ -14,6 +14,8 @@ must use synthetic records only.
 
 ## Architecture At A Glance
 
+![VenezuelaDataCleanHub system architecture](docs/assets/system-architecture.svg)
+
 ```mermaid
 flowchart LR
     mobile[Android / iOS apps]
@@ -52,6 +54,8 @@ flowchart LR
 
 ## Hardened Ingestion Flow
 
+![Hardened ingestion and review flow](docs/assets/hardened-ingestion-flow.svg)
+
 ```mermaid
 sequenceDiagram
     participant Operator
@@ -84,6 +88,8 @@ sequenceDiagram
 
 ## Safety Boundaries
 
+![Safety boundaries](docs/assets/safety-boundaries.svg)
+
 ```mermaid
 flowchart TB
     raw[Immutable raw records]
@@ -113,14 +119,22 @@ flowchart TB
 - PostgreSQL SQLAlchemy models and Alembic migrations.
 - Source registry with governance metadata, status controls, and audit events.
 - Approved manifest versions with static parser and adapter selection.
+- Production-shaped OIDC/JWT auth boundary with local dev-header auth isolated
+  to explicit local development mode.
+- Production surface controls for disabling OpenAPI docs by default and enabling
+  trusted-host validation.
 - HMAC-SHA256 identity tokens for cédula and phone matching signals.
-- Chunked ingestion jobs with progress, counters, events, and idempotent job creation.
-- Immutable raw record storage with redacted payload snapshots.
+- Chunked ingestion jobs with progress, counters, events, child retry jobs, and
+  idempotent job creation.
+- Bounded HTTPS `http_json`, `http_jsonl`, and `http_csv` source adapters.
+- Immutable raw record storage with deny-by-default redacted payload snapshots.
 - Quarantine records and quarantine events for unsafe or unparseable inputs.
 - Deterministic duplicate candidates and stable duplicate clusters.
 - Reviewer workflow primitives for assignment and decision recording.
 - Audited promotion request and decision boundary.
-- OpenClaw operations endpoints limited to approved runbooks and safe diagnostics.
+- OpenClaw operations endpoints limited to service-account agents, approved
+  runbooks, safe retries, and counter-only diagnostics.
+- Paginated list endpoints with bounded `limit`/`offset` contracts.
 - Safe API error handling that avoids returning raw exception text.
 - Local Docker Compose stack for Postgres, Temporal, MinIO, OPA, Keycloak, API, and worker.
 - CI workflow for lint, tests, migration application, and whitespace checks.
@@ -132,6 +146,8 @@ flowchart TB
 - [Implementation Slice](docs/implementation-slice.md)
 - [Security and Privacy Model](docs/security/security-and-privacy.md)
 - [OpenClaw Operations Model](docs/operations/openclaw-operations.md)
+- [Production Hardening Runbook](docs/operations/production-hardening.md)
+- [Diagram Assets](docs/assets)
 - [Roadmap](docs/roadmap.md)
 - [ADR 0001: Architecture Direction](docs/adr/0001-platform-architecture-direction.md)
 - [Local Foundation Guide](docs/development/local-foundation.md)
@@ -153,6 +169,13 @@ Run the local service stack:
 ```bash
 docker compose -f infra/docker-compose.yml up --build
 ```
+
+The Compose stack intentionally sets `VDCH_AUTH_MODE=dev_headers` and
+`VDCH_DEV_AUTH_ENABLED=true` for localhost testing. That mode lets clients
+self-assert actor headers and is unsafe outside a developer machine. Production
+deployments should set `VDCH_AUTH_MODE=oidc`, configure issuer, audience, and
+JWKS URL, set `VDCH_ENVIRONMENT=production`, configure `VDCH_TRUSTED_HOSTS`,
+and keep dev auth disabled.
 
 Useful local services:
 
@@ -180,9 +203,9 @@ The Alembic command requires a reachable PostgreSQL database.
 
 The following remain staged production work:
 
-- Full OIDC/JWT verification at the API boundary.
+- Production Keycloak realm hardening, client provisioning, and deployment-specific
+  OIDC/JWKS validation against the live IdP.
 - Signed file uploads and object-storage snapshot lifecycle.
-- CSV, JSONL, and file adapters.
 - Redpanda/Kafka event streaming integration.
 - Export workflows and role-scoped export approval.
 - Biometric processing approval, retention, and audit controls.

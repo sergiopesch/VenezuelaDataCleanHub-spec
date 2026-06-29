@@ -11,8 +11,10 @@ from vdch.models import (
     DuplicateCluster,
     DuplicateClusterMember,
     Job,
+    JobChunk,
     PersonRecord,
-    ReviewCase,
+    PromotionRequest,
+    QuarantineRecord,
     Source,
     SourceManifestVersion,
 )
@@ -22,29 +24,55 @@ from vdch.schemas import (
     DuplicateCandidateDetailResponse,
     DuplicateClusterDetailResponse,
     DuplicateClusterResponse,
+    JobChunkResponse,
     JobEventResponse,
     JobResponse,
+    OpsDailyQualitySummaryResponse,
+    OpsJobDiagnosticsResponse,
     OpsRetryJobRequest,
     OpsStartApprovedIngestionRequest,
     PersonRecordSummary,
+    PromotionCreateRequest,
+    PromotionDecisionRequest,
+    PromotionResponse,
+    QuarantineRecordResponse,
+    QuarantineResolveRequest,
+    ReviewAssignmentRequest,
     ReviewCaseResponse,
     ReviewDecisionRequest,
     SourceManifestCreate,
     SourceManifestResponse,
+    SourceResponse,
+    SourceStatusUpdateRequest,
 )
 from vdch.security import Actor, check_policy, get_actor, require_scope
 from vdch.services import (
+    SAFE_JOB_FAILURE_MESSAGE,
     append_job_event,
     approve_manifest,
     as_http_error,
+    assign_review_case,
+    build_daily_quality_summary,
+    build_ops_job_diagnostics,
     create_ingestion_job,
+    create_promotion_request,
     create_source_manifest,
+    decide_promotion_request,
     decide_review_case,
+    get_source,
+    list_job_chunks,
     list_job_events,
     list_manifests,
+    list_promotion_requests,
+    list_quarantine_records,
+    list_sources,
+    resolve_quarantine_record,
     run_manifest_ingestion,
+    update_source_status,
 )
 from vdch.workflow_client import start_ingestion_workflow
+
+SENSITIVE_EVENT_METADATA_KEYS = {"reason", "runbook_reason"}
 
 app = FastAPI(
     title="VenezuelaDataCleanHub API",
@@ -59,9 +87,35 @@ def manifest_response(session: Session, manifest: SourceManifestVersion) -> Sour
         id=manifest.id,
         source_id=manifest.source_id,
         source_slug=source.slug if source else "",
+        source_status=source.status if source else "",
+        source_type=source.source_type if source else "",
+        trust_tier=source.trust_tier if source else "",
+        permission_basis=source.permission_basis if source else None,
         version=manifest.version,
         approval_status=manifest.approval_status,
+        parser_name=manifest.parser_name,
+        parser_version=manifest.parser_version,
+        adapter_name=manifest.adapter_name,
         manifest_json=redacted_manifest(manifest.manifest_json),
+    )
+
+
+def source_response(source: Source) -> SourceResponse:
+    return SourceResponse(
+        id=source.id,
+        slug=source.slug,
+        display_name=source.display_name,
+        owner=source.owner,
+        status=source.status,
+        trust_tier=source.trust_tier,
+        source_type=source.source_type,
+        permission_basis=source.permission_basis,
+        allowed_domains_json=source.allowed_domains_json or {},
+        default_rate_limit_json=source.default_rate_limit_json or {},
+        reviewed_by=source.reviewed_by,
+        reviewed_at=source.reviewed_at.isoformat() if source.reviewed_at else None,
+        last_successful_job_id=source.last_successful_job_id,
+        last_failed_job_id=source.last_failed_job_id,
     )
 
 
@@ -73,6 +127,7 @@ def redacted_manifest(manifest: dict) -> dict:
 
 
 def job_response(job: Job) -> JobResponse:
+    error_message = SAFE_JOB_FAILURE_MESSAGE if job.error_message else None
     return JobResponse(
         id=job.id,
         type=job.type,
@@ -82,8 +137,15 @@ def job_response(job: Job) -> JobResponse:
         progress_json=job.progress_json or {},
         summary_json=job.summary_json or {},
         error_code=job.error_code,
-        error_message=job.error_message,
+        error_message=error_message,
     )
+
+
+def safe_event_metadata(metadata: dict) -> dict:
+    return {
+        key: "[REDACTED]" if key in SENSITIVE_EVENT_METADATA_KEYS else value
+        for key, value in (metadata or {}).items()
+    }
 
 
 def job_event_response(event) -> JobEventResponse:
@@ -93,9 +155,53 @@ def job_event_response(event) -> JobEventResponse:
         sequence=event.sequence,
         event_type=event.event_type,
         phase=event.phase,
-        message=event.message,
-        metadata_json=event.metadata_json or {},
+        message=SAFE_JOB_FAILURE_MESSAGE if event.event_type == "job.failed" else event.message,
+        metadata_json=safe_event_metadata(event.metadata_json or {}),
         created_at=event.created_at.isoformat(),
+    )
+
+
+def job_chunk_response(chunk: JobChunk) -> JobChunkResponse:
+    return JobChunkResponse(
+        id=chunk.id,
+        job_id=chunk.job_id,
+        sequence=chunk.sequence,
+        status=chunk.status,
+        source_uri=chunk.source_uri,
+        checkpoint_json=chunk.checkpoint_json or {},
+        records_seen=chunk.records_seen,
+        raw_records_created=chunk.raw_records_created,
+        person_records_created=chunk.person_records_created,
+        quarantine_records_created=chunk.quarantine_records_created,
+        error_code=chunk.error_code,
+        error_message=SAFE_JOB_FAILURE_MESSAGE if chunk.error_message else None,
+    )
+
+
+def quarantine_record_response(record: QuarantineRecord) -> QuarantineRecordResponse:
+    return QuarantineRecordResponse(
+        id=record.id,
+        job_id=record.job_id,
+        job_chunk_id=record.job_chunk_id,
+        source_id=record.source_id,
+        source_record_id=record.source_record_id,
+        reason_code=record.reason_code,
+        reason_message=record.reason_message,
+        status=record.status,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+def promotion_response(promotion: PromotionRequest) -> PromotionResponse:
+    return PromotionResponse(
+        id=promotion.id,
+        job_id=promotion.job_id,
+        status=promotion.status,
+        requested_by=promotion.requested_by,
+        summary_json=promotion.summary_json or {},
+        decided_by=promotion.decided_by,
+        decided_at=promotion.decided_at.isoformat() if promotion.decided_at else None,
+        created_at=promotion.created_at.isoformat(),
     )
 
 
@@ -158,6 +264,57 @@ async def create_source_manifest_endpoint(
         )
         session.commit()
         return manifest_response(session, manifest)
+    except Exception as exc:
+        session.rollback()
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/sources", response_model=list[SourceResponse])
+async def list_sources_endpoint(
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+    status_filter: str = Query(default="all", alias="status"),
+) -> list[SourceResponse]:
+    await require_scope(actor, "operator")
+    sources = list_sources(session, status_filter=status_filter)
+    return [source_response(source) for source in sources]
+
+
+@app.get("/v1/sources/{source_ref}", response_model=SourceResponse)
+async def get_source_endpoint(
+    source_ref: str,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> SourceResponse:
+    await require_scope(actor, "operator")
+    try:
+        return source_response(get_source(session, source_ref=source_ref))
+    except Exception as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.patch("/v1/sources/{source_ref}/status", response_model=SourceResponse)
+async def update_source_status_endpoint(
+    source_ref: str,
+    payload: SourceStatusUpdateRequest,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> SourceResponse:
+    await require_scope(actor, "data_steward")
+    policy_decision = await check_policy(
+        actor, "source.update_status", {"type": "source", "id": source_ref}
+    )
+    try:
+        source = update_source_status(
+            session,
+            source_ref=source_ref,
+            new_status=payload.status,
+            reason=payload.reason,
+            actor=actor,
+            policy_decision=policy_decision,
+        )
+        session.commit()
+        return source_response(source)
     except Exception as exc:
         session.rollback()
         raise as_http_error(exc) from exc
@@ -286,6 +443,63 @@ async def get_job_events_endpoint(
     return [job_event_response(event) for event in list_job_events(session, job_id=job.id)]
 
 
+@app.get("/v1/jobs/{job_id}/chunks", response_model=list[JobChunkResponse])
+async def get_job_chunks_endpoint(
+    job_id: str,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> list[JobChunkResponse]:
+    await require_scope(actor, "operator")
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return [job_chunk_response(chunk) for chunk in list_job_chunks(session, job_id=job.id)]
+
+
+@app.get("/v1/quarantine-records", response_model=list[QuarantineRecordResponse])
+async def list_quarantine_records_endpoint(
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+    status_filter: str = Query(default="open", alias="status"),
+    job_id: str | None = Query(default=None),
+) -> list[QuarantineRecordResponse]:
+    await require_scope(actor, "operator")
+    records = list_quarantine_records(session, status_filter=status_filter, job_id=job_id)
+    return [quarantine_record_response(record) for record in records]
+
+
+@app.post(
+    "/v1/quarantine-records/{quarantine_record_id}/resolve",
+    response_model=QuarantineRecordResponse,
+)
+async def resolve_quarantine_record_endpoint(
+    quarantine_record_id: str,
+    payload: QuarantineResolveRequest,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> QuarantineRecordResponse:
+    await require_scope(actor, "operator")
+    policy_decision = await check_policy(
+        actor,
+        "quarantine.resolve",
+        {"type": "quarantine_record", "id": quarantine_record_id},
+    )
+    try:
+        record = resolve_quarantine_record(
+            session,
+            quarantine_record_id=quarantine_record_id,
+            new_status=payload.status,
+            reason=payload.reason,
+            actor=actor,
+            policy_decision=policy_decision,
+        )
+        session.commit()
+        return quarantine_record_response(record)
+    except Exception as exc:
+        session.rollback()
+        raise as_http_error(exc) from exc
+
+
 @app.get("/v1/review-cases", response_model=list[ReviewCaseResponse])
 async def list_review_cases_endpoint(
     actor: Actor = Depends(get_actor),
@@ -301,6 +515,7 @@ async def list_review_cases_endpoint(
             cluster_id=case.cluster_id,
             queue=case.queue,
             status=case.status,
+            assigned_to=case.assigned_to,
             priority=case.priority,
         )
         for case in cases
@@ -395,6 +610,41 @@ async def get_duplicate_cluster_endpoint(
     )
 
 
+@app.post("/v1/review-cases/{review_case_id}/assign", response_model=ReviewCaseResponse)
+async def assign_review_case_endpoint(
+    review_case_id: str,
+    payload: ReviewAssignmentRequest,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> ReviewCaseResponse:
+    await require_scope(actor, "reviewer")
+    policy_decision = await check_policy(
+        actor, "review_case.assign", {"type": "review_case", "id": review_case_id}
+    )
+    try:
+        review_case = assign_review_case(
+            session,
+            review_case_id=review_case_id,
+            assigned_to=payload.assigned_to,
+            reason=payload.reason,
+            actor=actor,
+            policy_decision=policy_decision,
+        )
+        session.commit()
+        return ReviewCaseResponse(
+            id=review_case.id,
+            duplicate_candidate_id=review_case.duplicate_candidate_id,
+            cluster_id=review_case.cluster_id,
+            queue=review_case.queue,
+            status=review_case.status,
+            assigned_to=review_case.assigned_to,
+            priority=review_case.priority,
+        )
+    except Exception as exc:
+        session.rollback()
+        raise as_http_error(exc) from exc
+
+
 @app.post("/v1/review-cases/{review_case_id}/decision", status_code=status.HTTP_201_CREATED)
 async def decide_review_case_endpoint(
     review_case_id: str,
@@ -417,6 +667,73 @@ async def decide_review_case_endpoint(
         )
         session.commit()
         return {"id": decision.id, "status": "created"}
+    except Exception as exc:
+        session.rollback()
+        raise as_http_error(exc) from exc
+
+
+@app.post("/v1/promotions", response_model=PromotionResponse, status_code=status.HTTP_201_CREATED)
+async def create_promotion_request_endpoint(
+    payload: PromotionCreateRequest,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> PromotionResponse:
+    await require_scope(actor, "operator")
+    policy_decision = await check_policy(
+        actor,
+        "promotion.request",
+        {"type": "job", "id": payload.job_id},
+    )
+    try:
+        promotion = create_promotion_request(
+            session,
+            job_id=payload.job_id,
+            reason=payload.reason,
+            actor=actor,
+            policy_decision=policy_decision,
+        )
+        session.commit()
+        return promotion_response(promotion)
+    except Exception as exc:
+        session.rollback()
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/promotions", response_model=list[PromotionResponse])
+async def list_promotion_requests_endpoint(
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+    status_filter: str = Query(default="all", alias="status"),
+) -> list[PromotionResponse]:
+    await require_scope(actor, "data_steward")
+    promotions = list_promotion_requests(session, status_filter=status_filter)
+    return [promotion_response(promotion) for promotion in promotions]
+
+
+@app.post("/v1/promotions/{promotion_id}/decision", response_model=PromotionResponse)
+async def decide_promotion_request_endpoint(
+    promotion_id: str,
+    payload: PromotionDecisionRequest,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> PromotionResponse:
+    await require_scope(actor, "data_steward")
+    policy_decision = await check_policy(
+        actor,
+        "promotion.decide",
+        {"type": "promotion_request", "id": promotion_id},
+    )
+    try:
+        promotion = decide_promotion_request(
+            session,
+            promotion_id=promotion_id,
+            decision=payload.decision,
+            reason=payload.reason,
+            actor=actor,
+            policy_decision=policy_decision,
+        )
+        session.commit()
+        return promotion_response(promotion)
     except Exception as exc:
         session.rollback()
         raise as_http_error(exc) from exc
@@ -512,24 +829,25 @@ async def ops_retry_job_endpoint(
     return job_response(job)
 
 
-@app.get("/v1/ops/jobs/{job_id}/diagnostics")
+@app.get("/v1/ops/jobs/{job_id}/diagnostics", response_model=OpsJobDiagnosticsResponse)
 async def ops_job_diagnostics_endpoint(
     job_id: str,
     actor: Actor = Depends(get_actor),
     session: Session = Depends(get_session),
-) -> dict:
+) -> OpsJobDiagnosticsResponse:
     await require_scope(actor, "openclaw:diagnostics")
     await check_policy(actor, "ops.job.diagnostics", {"type": "job", "id": job_id})
-    job = session.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    review_count = session.scalar(
-        select(func.count()).select_from(ReviewCase).where(ReviewCase.status == "open")
-    )
-    events = list_job_events(session, job_id=job.id)
-    return {
-        "job": job_response(job).model_dump(),
-        "open_review_cases": review_count,
-        "events": [job_event_response(event).model_dump() for event in events[-10:]],
-        "safe_for_agent": True,
-    }
+    try:
+        return OpsJobDiagnosticsResponse(**build_ops_job_diagnostics(session, job_id=job_id))
+    except Exception as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post("/v1/ops/reports/daily-quality-summary", response_model=OpsDailyQualitySummaryResponse)
+async def ops_daily_quality_summary_endpoint(
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> OpsDailyQualitySummaryResponse:
+    await require_scope(actor, "openclaw:diagnostics")
+    await check_policy(actor, "ops.report.daily_quality_summary", {"type": "ops_report"})
+    return OpsDailyQualitySummaryResponse(**build_daily_quality_summary(session))

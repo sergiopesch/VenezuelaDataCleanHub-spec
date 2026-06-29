@@ -8,8 +8,10 @@ from typing import Any
 from vdch.config import get_settings
 from vdch.manifest import mapped_value
 
+IDENTITY_TOKEN_VERSION = "hmac-sha256-v1"
 
-def stable_json_hash(payload: dict[str, Any]) -> str:
+
+def stable_json_hash(payload: Any) -> str:
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
@@ -25,13 +27,27 @@ def normalize_text(value: Any) -> str | None:
     return text or None
 
 
-def fingerprint_digits(value: Any) -> str | None:
+def normalize_identifier(value: Any) -> str | None:
     if value is None:
         return None
-    digits = re.sub(r"\D", "", str(value))
-    if not digits:
+    normalized = str(value).strip().lower()
+    normalized = unicodedata.normalize("NFKD", normalized)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = re.sub(r"[^a-z0-9]", "", normalized)
+    if not normalized:
         return None
-    return keyed_fingerprint(digits)
+    if normalized[0] in {"v", "e"}:
+        digits = re.sub(r"\D", "", normalized[1:])
+        return f"{normalized[0]}{digits}" if digits else None
+    digits = re.sub(r"\D", "", normalized)
+    return digits or None
+
+
+def fingerprint_digits(value: Any) -> str | None:
+    normalized = normalize_identifier(value)
+    if not normalized:
+        return None
+    return keyed_fingerprint(normalized)
 
 
 def fingerprint_url(value: Any) -> str | None:
@@ -98,4 +114,5 @@ def build_person_fields(record: dict[str, Any], mappings: dict[str, str]) -> dic
         "source_date": mapped_value(record, mappings, "source_date"),
         "quality_score": quality_score,
         "quality_evidence_json": evidence,
+        "identity_token_version": IDENTITY_TOKEN_VERSION,
     }

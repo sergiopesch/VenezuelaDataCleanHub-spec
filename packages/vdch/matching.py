@@ -11,6 +11,7 @@ from vdch.models import (
     DuplicateClusterMember,
     PersonRecord,
     ReviewCase,
+    utcnow,
 )
 
 MATCH_MODEL_VERSION = "deterministic-v1"
@@ -191,7 +192,6 @@ class _UnionFind:
 def rebuild_duplicate_clusters(session: Session) -> int:
     session.execute(update(ReviewCase).values(cluster_id=None))
     session.execute(delete(DuplicateClusterMember))
-    session.execute(delete(DuplicateCluster))
     session.flush()
 
     candidates = list(
@@ -210,6 +210,7 @@ def rebuild_duplicate_clusters(session: Session) -> int:
         edge_confidence[pair] = candidate.confidence
 
     clusters_created = 0
+    active_cluster_keys: set[str] = set()
     for member_ids in union_find.groups():
         member_id_set = set(member_ids)
         members = list(session.scalars(select(PersonRecord).where(PersonRecord.id.in_(member_ids))))
@@ -222,14 +223,26 @@ def rebuild_duplicate_clusters(session: Session) -> int:
         ]
         cluster_confidence = round(min(pair_confidences), 3) if pair_confidences else 0.0
         canonical = _canonical_member(members)
-        cluster = DuplicateCluster(
-            cluster_key=_cluster_key(member_ids),
-            canonical_person_record_id=canonical.id,
-            confidence=cluster_confidence,
-            status="open",
+        cluster_key = _cluster_key(member_ids)
+        active_cluster_keys.add(cluster_key)
+        cluster = session.scalar(
+            select(DuplicateCluster).where(DuplicateCluster.cluster_key == cluster_key)
         )
-        session.add(cluster)
-        session.flush()
+        if cluster is None:
+            cluster = DuplicateCluster(
+                cluster_key=cluster_key,
+                canonical_person_record_id=canonical.id,
+                confidence=cluster_confidence,
+                status="open",
+            )
+            session.add(cluster)
+            session.flush()
+            clusters_created += 1
+        else:
+            cluster.canonical_person_record_id = canonical.id
+            cluster.confidence = cluster_confidence
+            cluster.status = "open"
+            cluster.updated_at = utcnow()
         for member in members:
             session.add(
                 DuplicateClusterMember(
@@ -248,7 +261,12 @@ def rebuild_duplicate_clusters(session: Session) -> int:
                 )
                 if review_case:
                     review_case.cluster_id = cluster.id
-        clusters_created += 1
+    stale_query = select(DuplicateCluster).where(DuplicateCluster.status == "open")
+    if active_cluster_keys:
+        stale_query = stale_query.where(~DuplicateCluster.cluster_key.in_(active_cluster_keys))
+    for stale_cluster in session.scalars(stale_query):
+        stale_cluster.status = "stale"
+        stale_cluster.updated_at = utcnow()
     return clusters_created
 
 

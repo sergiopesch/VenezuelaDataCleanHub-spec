@@ -37,3 +37,4 @@ def session():
     finally:
         db.close()
         Base.metadata.drop_all(engine)
+        engine.dispose()

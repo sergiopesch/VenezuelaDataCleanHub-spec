@@ -3,11 +3,14 @@
 VenezuelaDataCleanHub is an open-source, production-shaped platform for high-volume
 data deduplication, cleanup, review, and controlled data pipeline operations.
 
-The platform is separate from the earlier Hugging Face prototype. This repository
-now contains both the architecture specification and the first hardened
-implementation foundation: FastAPI APIs, PostgreSQL models and migrations,
-approved source manifests, chunked ingestion, deterministic matching, reviewer
-queues, quarantine handling, OpenClaw operations guardrails, and CI checks.
+The platform is separate from the earlier Hugging Face prototype, which remains
+available as the public
+[AyudaVenezuela2026 Hugging Face Space](https://huggingface.co/spaces/sergiopesch/ayudavenezuela2026)
+for reference. This repository now contains both the architecture specification
+and the first hardened implementation foundation: FastAPI APIs, PostgreSQL
+models and migrations, approved source manifests, chunked ingestion,
+deterministic matching, reviewer queues, quarantine handling, OpenClaw operations
+guardrails, and CI checks.
 
 No real sensitive data should be committed to this repository. Tests and fixtures
 must use synthetic records only.

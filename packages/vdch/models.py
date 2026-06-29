@@ -55,11 +55,16 @@ class SourceManifestVersion(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        UniqueConstraint("type", "requested_by", "idempotency_key", name="uq_job_idempotency"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="queued", index=True)
     requested_by: Mapped[str] = mapped_column(String(240), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_manifest_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("source_manifest_versions.id"), index=True
     )
@@ -71,6 +76,20 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class JobEvent(Base):
+    __tablename__ = "job_events"
+    __table_args__ = (UniqueConstraint("job_id", "sequence", name="uq_job_event_sequence"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    phase: Mapped[str | None] = mapped_column(String(80), index=True)
+    message: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class RawRecord(Base):
@@ -135,6 +154,31 @@ class DuplicateCandidate(Base):
     conflict_flags_json: Mapped[dict] = mapped_column(JsonType, default=dict)
     model_version: Mapped[str] = mapped_column(String(80), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DuplicateCluster(Base):
+    __tablename__ = "duplicate_clusters"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cluster_key: Mapped[str] = mapped_column(String(160), unique=True, nullable=False, index=True)
+    canonical_person_record_id: Mapped[str | None] = mapped_column(ForeignKey("person_records.id"))
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(60), nullable=False, default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DuplicateClusterMember(Base):
+    __tablename__ = "duplicate_cluster_members"
+    __table_args__ = (
+        UniqueConstraint("cluster_id", "person_record_id", name="uq_cluster_member"),
+    )
+
+    cluster_id: Mapped[str] = mapped_column(
+        ForeignKey("duplicate_clusters.id"), primary_key=True
+    )
+    person_record_id: Mapped[str] = mapped_column(ForeignKey("person_records.id"), primary_key=True)
+    membership_confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
 
 class ReviewCase(Base):

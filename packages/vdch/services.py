@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 from vdch.audit import write_audit_event
 from vdch.config import Settings, get_settings
 from vdch.manifest import ManifestValidationError, get_by_path, mapped_value, validate_manifest
-from vdch.matching import create_duplicate_candidates
+from vdch.matching import create_duplicate_candidates, rebuild_duplicate_clusters
 from vdch.models import (
     DuplicateCandidate,
     Job,
+    JobEvent,
     PersonRecord,
     RawRecord,
     ReviewCase,
@@ -133,6 +134,7 @@ def create_ingestion_job(
     manifest_id: str,
     actor: Actor,
     policy_decision: str,
+    idempotency_key: str | None = None,
     metadata: dict | None = None,
 ) -> Job:
     manifest = session.get(SourceManifestVersion, manifest_id)
@@ -144,16 +146,51 @@ def create_ingestion_job(
             status.HTTP_409_CONFLICT,
         )
 
+    if idempotency_key:
+        existing_job = session.scalar(
+            select(Job).where(
+                Job.type == "approved_manifest_ingestion",
+                Job.requested_by == actor.actor_id,
+                Job.idempotency_key == idempotency_key,
+            )
+        )
+        if existing_job:
+            if existing_job.source_manifest_version_id != manifest.id:
+                raise DomainError(
+                    "Idempotency key was already used for a different manifest",
+                    status.HTTP_409_CONFLICT,
+                )
+            existing_job._vdch_created = False
+            append_job_event(
+                session,
+                existing_job,
+                event_type="job.idempotent_reuse",
+                phase=existing_job.progress_json.get("phase"),
+                message="Existing job returned for idempotency key.",
+                metadata={"idempotency_key": idempotency_key},
+            )
+            return existing_job
+
     job = Job(
         type="approved_manifest_ingestion",
         status="queued",
         requested_by=actor.actor_id,
+        idempotency_key=idempotency_key,
         source_manifest_version_id=manifest.id,
         progress_json={"phase": "queued", "records_seen": 0},
         summary_json={},
     )
     session.add(job)
     session.flush()
+    job._vdch_created = True
+    append_job_event(
+        session,
+        job,
+        event_type="job.queued",
+        phase="queued",
+        message="Approved manifest ingestion job queued.",
+        metadata={"manifest_id": manifest.id, **(metadata or {})},
+    )
     write_audit_event(
         session,
         actor=actor,
@@ -164,6 +201,39 @@ def create_ingestion_job(
         metadata=metadata or {"manifest_id": manifest.id},
     )
     return job
+
+
+def append_job_event(
+    session: Session,
+    job: Job,
+    *,
+    event_type: str,
+    phase: str | None = None,
+    message: str | None = None,
+    metadata: dict | None = None,
+) -> JobEvent:
+    session.flush()
+    latest_sequence = session.scalar(
+        select(func.max(JobEvent.sequence)).where(JobEvent.job_id == job.id)
+    )
+    event = JobEvent(
+        job_id=job.id,
+        sequence=(latest_sequence or 0) + 1,
+        event_type=event_type,
+        phase=phase,
+        message=message,
+        metadata_json=metadata or {},
+    )
+    session.add(event)
+    return event
+
+
+def list_job_events(session: Session, *, job_id: str) -> list[JobEvent]:
+    return list(
+        session.scalars(
+            select(JobEvent).where(JobEvent.job_id == job_id).order_by(JobEvent.sequence.asc())
+        ).all()
+    )
 
 
 def _redact_record(record: dict[str, Any], sensitive_fields: Iterable[str]) -> dict[str, Any]:
@@ -197,6 +267,15 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
     job = session.get(Job, job_id)
     if job is None:
         raise DomainError("Job not found", status.HTTP_404_NOT_FOUND)
+    if job.status == "completed":
+        append_job_event(
+            session,
+            job,
+            event_type="job.execution_skipped",
+            phase=job.progress_json.get("phase"),
+            message="Completed job execution was skipped.",
+        )
+        return job
     manifest_version = session.get(SourceManifestVersion, job.source_manifest_version_id)
     if manifest_version is None:
         raise DomainError("Job manifest version not found", status.HTTP_404_NOT_FOUND)
@@ -207,12 +286,33 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
     sensitive_fields = manifest_version.sensitive_fields_json.get("fields", [])
 
     job.status = "running"
+    job.attempt_count += 1
     job.started_at = utcnow()
-    job.progress_json = {"phase": "ingestion", "records_seen": 0}
+    job.progress_json = {
+        "phase": "ingestion",
+        "records_seen": 0,
+        "attempt": job.attempt_count,
+    }
+    append_job_event(
+        session,
+        job,
+        event_type="job.started",
+        phase="ingestion",
+        message="Ingestion workflow started.",
+        metadata={"attempt": job.attempt_count},
+    )
     session.flush()
 
     try:
         records = _records_from_manifest(manifest)
+        append_job_event(
+            session,
+            job,
+            event_type="job.records_loaded",
+            phase="ingestion",
+            message="Source records loaded for ingestion.",
+            metadata={"records_seen": len(records)},
+        )
         raw_created = 0
         person_created = 0
         for index, record in enumerate(records, start=1):
@@ -257,25 +357,78 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
                 person_created += 1
 
             if index % 100 == 0:
-                job.progress_json = {"phase": "ingestion", "records_seen": index}
+                job.progress_json = {
+                    "phase": "ingestion",
+                    "records_seen": index,
+                    "attempt": job.attempt_count,
+                }
+                append_job_event(
+                    session,
+                    job,
+                    event_type="job.checkpoint",
+                    phase="ingestion",
+                    message="Ingestion checkpoint recorded.",
+                    metadata={"records_seen": index},
+                )
                 session.flush()
 
-        job.progress_json = {"phase": "matching", "records_seen": len(records)}
+        job.progress_json = {
+            "phase": "matching",
+            "records_seen": len(records),
+            "attempt": job.attempt_count,
+        }
+        append_job_event(
+            session,
+            job,
+            event_type="job.phase_started",
+            phase="matching",
+            message="Duplicate candidate matching started.",
+            metadata={"records_seen": len(records)},
+        )
         session.flush()
         candidates_created = create_duplicate_candidates(session)
+        job.progress_json = {
+            "phase": "clustering",
+            "records_seen": len(records),
+            "attempt": job.attempt_count,
+        }
+        append_job_event(
+            session,
+            job,
+            event_type="job.phase_started",
+            phase="clustering",
+            message="Duplicate cluster rebuilding started.",
+            metadata={"duplicate_candidates_created": candidates_created},
+        )
+        session.flush()
+        clusters_created = rebuild_duplicate_clusters(session)
         review_cases_open = session.scalar(
             select(func.count()).select_from(ReviewCase).where(ReviewCase.status == "open")
         )
         job.status = "completed"
         job.completed_at = utcnow()
-        job.progress_json = {"phase": "completed", "records_seen": len(records)}
+        job.progress_json = {
+            "phase": "completed",
+            "records_seen": len(records),
+            "attempt": job.attempt_count,
+        }
         job.summary_json = {
             "records_seen": len(records),
             "raw_records_created": raw_created,
             "person_records_created": person_created,
             "duplicate_candidates_created": candidates_created,
+            "duplicate_clusters_created": clusters_created,
             "open_review_cases": review_cases_open or 0,
+            "attempt": job.attempt_count,
         }
+        append_job_event(
+            session,
+            job,
+            event_type="job.completed",
+            phase="completed",
+            message="Ingestion workflow completed.",
+            metadata=job.summary_json,
+        )
         session.flush()
         return job
     except Exception as exc:
@@ -284,6 +437,14 @@ def run_manifest_ingestion(session: Session, *, job_id: str) -> Job:
         job.error_code = exc.__class__.__name__
         job.error_message = str(exc)
         job.progress_json = {**(job.progress_json or {}), "phase": "failed"}
+        append_job_event(
+            session,
+            job,
+            event_type="job.failed",
+            phase="failed",
+            message=str(exc),
+            metadata={"error_code": job.error_code},
+        )
         session.flush()
         raise
 

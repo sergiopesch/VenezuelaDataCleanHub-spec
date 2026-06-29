@@ -6,13 +6,27 @@ from sqlalchemy.orm import Session
 from vdch.config import get_settings
 from vdch.db import get_session
 from vdch.matching import review_case_query
-from vdch.models import Job, ReviewCase, Source, SourceManifestVersion
+from vdch.models import (
+    DuplicateCandidate,
+    DuplicateCluster,
+    DuplicateClusterMember,
+    Job,
+    PersonRecord,
+    ReviewCase,
+    Source,
+    SourceManifestVersion,
+)
 from vdch.schemas import (
     ApproveManifestRequest,
     CreateIngestionJobRequest,
+    DuplicateCandidateDetailResponse,
+    DuplicateClusterDetailResponse,
+    DuplicateClusterResponse,
+    JobEventResponse,
     JobResponse,
     OpsRetryJobRequest,
     OpsStartApprovedIngestionRequest,
+    PersonRecordSummary,
     ReviewCaseResponse,
     ReviewDecisionRequest,
     SourceManifestCreate,
@@ -20,11 +34,13 @@ from vdch.schemas import (
 )
 from vdch.security import Actor, check_policy, get_actor, require_scope
 from vdch.services import (
+    append_job_event,
     approve_manifest,
     as_http_error,
     create_ingestion_job,
     create_source_manifest,
     decide_review_case,
+    list_job_events,
     list_manifests,
     run_manifest_ingestion,
 )
@@ -54,10 +70,39 @@ def job_response(job: Job) -> JobResponse:
         id=job.id,
         type=job.type,
         status=job.status,
+        idempotency_key=job.idempotency_key,
+        attempt_count=job.attempt_count,
         progress_json=job.progress_json or {},
         summary_json=job.summary_json or {},
         error_code=job.error_code,
         error_message=job.error_message,
+    )
+
+
+def job_event_response(event) -> JobEventResponse:
+    return JobEventResponse(
+        id=event.id,
+        job_id=event.job_id,
+        sequence=event.sequence,
+        event_type=event.event_type,
+        phase=event.phase,
+        message=event.message,
+        metadata_json=event.metadata_json or {},
+        created_at=event.created_at.isoformat(),
+    )
+
+
+def person_summary(person: PersonRecord) -> PersonRecordSummary:
+    return PersonRecordSummary(
+        id=person.id,
+        source_id=person.source_id,
+        source_record_id=person.source_record_id,
+        display_name=person.display_name,
+        normalized_name=person.normalized_name,
+        status=person.status,
+        age=person.age,
+        location_general=person.location_general,
+        quality_score=person.quality_score,
     )
 
 
@@ -178,10 +223,13 @@ async def create_ingestion_job_endpoint(
             manifest_id=payload.source_manifest_version_id,
             actor=actor,
             policy_decision=policy_decision,
+            idempotency_key=payload.idempotency_key,
             metadata={"idempotency_key": payload.idempotency_key},
         )
         session.commit()
         settings = get_settings()
+        if not getattr(job, "_vdch_created", True):
+            return job_response(job)
         if settings.temporal_enabled:
             await start_ingestion_workflow(job.id, settings)
         else:
@@ -218,6 +266,19 @@ async def get_job_summary_endpoint(
     return {"job_id": job.id, "status": job.status, "summary": job.summary_json or {}}
 
 
+@app.get("/v1/jobs/{job_id}/events", response_model=list[JobEventResponse])
+async def get_job_events_endpoint(
+    job_id: str,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> list[JobEventResponse]:
+    await require_scope(actor, "operator")
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return [job_event_response(event) for event in list_job_events(session, job_id=job.id)]
+
+
 @app.get("/v1/review-cases", response_model=list[ReviewCaseResponse])
 async def list_review_cases_endpoint(
     actor: Actor = Depends(get_actor),
@@ -230,12 +291,101 @@ async def list_review_cases_endpoint(
         ReviewCaseResponse(
             id=case.id,
             duplicate_candidate_id=case.duplicate_candidate_id,
+            cluster_id=case.cluster_id,
             queue=case.queue,
             status=case.status,
             priority=case.priority,
         )
         for case in cases
     ]
+
+
+@app.get("/v1/duplicate-candidates/{candidate_id}", response_model=DuplicateCandidateDetailResponse)
+async def get_duplicate_candidate_endpoint(
+    candidate_id: str,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> DuplicateCandidateDetailResponse:
+    await require_scope(actor, "reviewer")
+    candidate = session.get(DuplicateCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Duplicate candidate not found")
+    left = session.get(PersonRecord, candidate.left_person_record_id)
+    right = session.get(PersonRecord, candidate.right_person_record_id)
+    if left is None or right is None:
+        raise HTTPException(status_code=500, detail="Candidate person records are missing")
+    return DuplicateCandidateDetailResponse(
+        id=candidate.id,
+        confidence=candidate.confidence,
+        review_bucket=candidate.review_bucket,
+        evidence_json=candidate.evidence_json,
+        conflict_flags_json=candidate.conflict_flags_json,
+        left=person_summary(left),
+        right=person_summary(right),
+    )
+
+
+@app.get("/v1/duplicate-clusters", response_model=list[DuplicateClusterResponse])
+async def list_duplicate_clusters_endpoint(
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+    status_filter: str = Query(default="open", alias="status"),
+) -> list[DuplicateClusterResponse]:
+    await require_scope(actor, "reviewer")
+    query = select(DuplicateCluster)
+    if status_filter != "all":
+        query = query.where(DuplicateCluster.status == status_filter)
+    clusters = session.scalars(query.order_by(DuplicateCluster.confidence.desc())).all()
+    responses = []
+    for cluster in clusters:
+        member_count = session.scalar(
+            select(func.count())
+            .select_from(DuplicateClusterMember)
+            .where(DuplicateClusterMember.cluster_id == cluster.id)
+        )
+        responses.append(
+            DuplicateClusterResponse(
+                id=cluster.id,
+                cluster_key=cluster.cluster_key,
+                canonical_person_record_id=cluster.canonical_person_record_id,
+                confidence=cluster.confidence,
+                status=cluster.status,
+                member_count=member_count or 0,
+            )
+        )
+    return responses
+
+
+@app.get("/v1/duplicate-clusters/{cluster_id}", response_model=DuplicateClusterDetailResponse)
+async def get_duplicate_cluster_endpoint(
+    cluster_id: str,
+    actor: Actor = Depends(get_actor),
+    session: Session = Depends(get_session),
+) -> DuplicateClusterDetailResponse:
+    await require_scope(actor, "reviewer")
+    cluster = session.get(DuplicateCluster, cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=404, detail="Duplicate cluster not found")
+    members = list(
+        session.scalars(
+            select(PersonRecord)
+            .join(
+                DuplicateClusterMember,
+                PersonRecord.id == DuplicateClusterMember.person_record_id,
+            )
+            .where(DuplicateClusterMember.cluster_id == cluster.id)
+            .order_by(PersonRecord.quality_score.desc(), PersonRecord.created_at.asc())
+        )
+    )
+    return DuplicateClusterDetailResponse(
+        id=cluster.id,
+        cluster_key=cluster.cluster_key,
+        canonical_person_record_id=cluster.canonical_person_record_id,
+        confidence=cluster.confidence,
+        status=cluster.status,
+        member_count=len(members),
+        members=[person_summary(member) for member in members],
+    )
 
 
 @app.post("/v1/review-cases/{review_case_id}/decision", status_code=status.HTTP_201_CREATED)
@@ -292,6 +442,8 @@ async def ops_start_approved_ingestion_endpoint(
         )
         session.commit()
         settings = get_settings()
+        if not getattr(job, "_vdch_created", True):
+            return job_response(job)
         if settings.temporal_enabled:
             await start_ingestion_workflow(job.id, settings)
         else:
@@ -336,6 +488,14 @@ async def ops_retry_job_endpoint(
         policy_decision=policy_decision,
         metadata={"reason": payload.reason},
     )
+    append_job_event(
+        session,
+        job,
+        event_type="job.retry_queued",
+        phase="retry_queued",
+        message="Failed job queued for retry.",
+        metadata={"reason": payload.reason},
+    )
     session.commit()
     settings = get_settings()
     if settings.temporal_enabled:
@@ -359,8 +519,10 @@ async def ops_job_diagnostics_endpoint(
     review_count = session.scalar(
         select(func.count()).select_from(ReviewCase).where(ReviewCase.status == "open")
     )
+    events = list_job_events(session, job_id=job.id)
     return {
         "job": job_response(job).model_dump(),
         "open_review_cases": review_count,
+        "events": [job_event_response(event).model_dump() for event in events[-10:]],
         "safe_for_agent": True,
     }

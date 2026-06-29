@@ -1,6 +1,16 @@
 from sqlalchemy import select
 from vdch.config import Settings
-from vdch.models import AuditEvent, DuplicateCandidate, RawRecord, ReviewCase, ReviewDecision
+from vdch.models import (
+    AuditEvent,
+    DuplicateCandidate,
+    DuplicateCluster,
+    DuplicateClusterMember,
+    Job,
+    JobEvent,
+    RawRecord,
+    ReviewCase,
+    ReviewDecision,
+)
 from vdch.schemas import SourceManifestCreate
 from vdch.security import Actor
 from vdch.services import (
@@ -25,7 +35,7 @@ def sample_manifest_payload() -> SourceManifestCreate:
                     "id": "a-1",
                     "name": "Jose Perez",
                     "cedula": "V-12345678",
-                    "phone": "+58 412 555 0000",
+                    "phone": "0412 555 0000",
                     "status": "active",
                     "age": 40,
                     "location": "Caracas",
@@ -95,6 +105,8 @@ def test_approved_manifest_ingestion_to_review_queue(session):
 
     raw_records = session.scalars(select(RawRecord)).all()
     candidates = session.scalars(select(DuplicateCandidate)).all()
+    clusters = session.scalars(select(DuplicateCluster)).all()
+    cluster_members = session.scalars(select(DuplicateClusterMember)).all()
     review_cases = session.scalars(select(ReviewCase)).all()
     audit_events = session.scalars(select(AuditEvent)).all()
 
@@ -104,9 +116,14 @@ def test_approved_manifest_ingestion_to_review_queue(session):
     assert len(raw_records) == 3
     assert raw_records[0].payload_json_redacted["phone"] == "[REDACTED]"
     assert len(candidates) == 1
-    assert candidates[0].confidence == 0.99
+    assert candidates[0].confidence == 0.995
+    assert candidates[0].evidence_json["signals"] == ["cedula", "phone", "name_last"]
+    assert len(clusters) == 1
+    assert len(cluster_members) == 2
     assert len(review_cases) == 1
     assert review_cases[0].queue == "alta_confianza"
+    assert review_cases[0].cluster_id == clusters[0].id
+    assert job.summary_json["duplicate_clusters_created"] == 1
     assert {event.operation for event in audit_events} == {
         "source_manifest.create",
         "source_manifest.approve",
@@ -156,6 +173,97 @@ def test_rerun_is_idempotent_for_raw_and_person_records(session):
     assert second_job.summary_json["raw_records_created"] == 0
 
 
+def test_ingestion_job_creation_is_idempotent_with_key(session):
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type="user",
+        scopes=frozenset({"operator", "data_steward"}),
+    )
+    settings = Settings(database_url="sqlite:///:memory:", allow_sample_manifests=True)
+    manifest = create_source_manifest(
+        session,
+        payload=sample_manifest_payload(),
+        actor=actor,
+        policy_decision="allow:test",
+        settings=settings,
+    )
+    approve_manifest(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="test approval",
+    )
+
+    first_job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        idempotency_key="source-sample-2026-06-29",
+    )
+    second_job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        idempotency_key="source-sample-2026-06-29",
+    )
+    session.commit()
+
+    jobs = session.scalars(select(Job)).all()
+    events = session.scalars(
+        select(JobEvent).where(JobEvent.job_id == first_job.id).order_by(JobEvent.sequence)
+    ).all()
+
+    assert first_job.id == second_job.id
+    assert len(jobs) == 1
+    assert [event.event_type for event in events] == ["job.queued", "job.idempotent_reuse"]
+
+
+def test_ingestion_job_events_record_lifecycle(session):
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type="user",
+        scopes=frozenset({"operator", "data_steward"}),
+    )
+    settings = Settings(database_url="sqlite:///:memory:", allow_sample_manifests=True)
+    manifest = create_source_manifest(
+        session,
+        payload=sample_manifest_payload(),
+        actor=actor,
+        policy_decision="allow:test",
+        settings=settings,
+    )
+    approve_manifest(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+        reason="test approval",
+    )
+    job = create_ingestion_job(
+        session,
+        manifest_id=manifest.id,
+        actor=actor,
+        policy_decision="allow:test",
+    )
+    run_manifest_ingestion(session, job_id=job.id)
+    session.commit()
+
+    events = session.scalars(
+        select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.sequence)
+    ).all()
+
+    assert job.attempt_count == 1
+    assert job.summary_json["attempt"] == 1
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert "job.queued" in {event.event_type for event in events}
+    assert "job.started" in {event.event_type for event in events}
+    assert "job.completed" in {event.event_type for event in events}
+    assert events[-1].phase == "completed"
+
+
 def test_review_decision_closes_case_and_snapshots_evidence(session):
     actor = Actor(
         actor_id="reviewer-1",
@@ -197,4 +305,4 @@ def test_review_decision_closes_case_and_snapshots_evidence(session):
     session.commit()
 
     assert review_case.status == "closed"
-    assert session.get(ReviewDecision, decision.id).evidence_snapshot_json["confidence"] == 0.99
+    assert session.get(ReviewDecision, decision.id).evidence_snapshot_json["confidence"] == 0.995

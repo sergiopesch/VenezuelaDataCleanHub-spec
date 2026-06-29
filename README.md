@@ -50,6 +50,10 @@ the architecture specification. The initial implementation slice includes:
 - Local background execution path for tests and early development.
 - Immutable raw records, derived person records, deterministic duplicate
   candidates, review cases, decisions, and audit events.
+- Aggregated duplicate evidence, duplicate clusters, and cluster/member review
+  APIs.
+- Idempotent ingestion job creation, attempt tracking, and append-only job event
+  history for diagnostics.
 - Scoped OpenClaw operations bridge endpoints.
 - Docker Compose environment for Postgres, Temporal, MinIO, OPA, Keycloak, API,
   and worker.

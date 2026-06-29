@@ -141,11 +141,16 @@ flowchart TB
 
 ## Core Documents
 
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
 - [Platform Hardening Spec](docs/platform-hardening-spec.md)
 - [Platform Architecture](docs/platform-architecture.md)
 - [Implementation Slice](docs/implementation-slice.md)
 - [Security and Privacy Model](docs/security/security-and-privacy.md)
+- [Multimodal Review Policy](docs/security/multimodal-review-policy.md)
 - [OpenClaw Operations Model](docs/operations/openclaw-operations.md)
+- [OpenClaw Demo Guide](docs/operations/openclaw-demo.md)
+- [Outreach Brief](docs/operations/outreach-brief.md)
 - [Production Hardening Runbook](docs/operations/production-hardening.md)
 - [Diagram Assets](docs/assets)
 - [Roadmap](docs/roadmap.md)
@@ -184,6 +189,12 @@ Useful local services:
 - Keycloak: <http://localhost:8081>
 - MinIO console: <http://localhost:9001>
 - OPA: <http://localhost:8181>
+
+Seed a synthetic OpenClaw demo dataset:
+
+```bash
+.venv/bin/python scripts/seed_openclaw_demo.py
+```
 
 ## Verification
 

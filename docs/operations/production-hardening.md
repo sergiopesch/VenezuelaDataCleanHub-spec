@@ -51,6 +51,12 @@ All sources must use public HTTPS hosts present in both the manifest
 source-provided authorization headers, cookies, proxy headers, private IPs,
 loopback hosts, link-local hosts, or redirects.
 
+HTTP adapters enforce `VDCH_MAX_HTTP_RESPONSE_BYTES` while reading the actual
+GET stream, including responses without a trustworthy `Content-Length`. They
+request `Accept-Encoding: identity` and reject other content encodings before
+reading the body, so automatic decompression cannot bypass the memory bound.
+Configure approved sources to honor identity encoding.
+
 ## Object Storage
 
 Object storage is required before enabling file uploads, raw payload snapshots,

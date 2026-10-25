@@ -1,3 +1,5 @@
+from contextlib import closing, contextmanager
+
 import httpx
 import pytest
 from sqlalchemy import select
@@ -514,25 +516,24 @@ def test_http_jsonl_and_csv_adapters_are_bounded_and_chunked(monkeypatch):
     monkeypatch.setenv("VDCH_MAX_INGESTION_RECORDS", "3")
     get_settings.cache_clear()
 
-    def fake_head(*_args, **_kwargs):
-        return httpx.Response(200, headers={"content-length": "120"})
-
-    def fake_get(url, *_args, **_kwargs):
+    @contextmanager
+    def fake_stream(_method, url, **_kwargs):
         request = httpx.Request("GET", url)
-        if url.endswith(".jsonl"):
-            return httpx.Response(
+        body = (
+            b'{"id":"a"}\n{"id":"b"}\n{"id":"c"}\n'
+            if url.endswith(".jsonl")
+            else b"id,status\na,active\nb,missing\nc,active\n"
+        )
+        with closing(
+            httpx.Response(
                 200,
-                text='{"id":"a"}\n{"id":"b"}\n{"id":"c"}\n',
+                stream=httpx.ByteStream(body),
                 request=request,
             )
-        return httpx.Response(
-            200,
-            text="id,status\na,active\nb,missing\nc,active\n",
-            request=request,
-        )
+        ) as response:
+            yield response
 
-    monkeypatch.setattr("vdch.adapters.httpx.head", fake_head)
-    monkeypatch.setattr("vdch.adapters.httpx.get", fake_get)
+    monkeypatch.setattr("vdch.adapters.httpx.stream", fake_stream)
     base_manifest = {
         "base_url": "https://api.example.org/records.jsonl",
         "allowed_hosts": ["api.example.org"],
@@ -567,10 +568,19 @@ def test_http_adapter_rejects_content_length_over_limit(monkeypatch):
     monkeypatch.setenv("VDCH_MAX_HTTP_RESPONSE_BYTES", "10")
     get_settings.cache_clear()
 
-    def fake_head(*_args, **_kwargs):
-        return httpx.Response(200, headers={"content-length": "11"})
+    @contextmanager
+    def fake_stream(_method, url, **_kwargs):
+        with closing(
+            httpx.Response(
+                200,
+                headers={"content-length": "11"},
+                stream=httpx.ByteStream(b"01234567890"),
+                request=httpx.Request("GET", url),
+            )
+        ) as response:
+            yield response
 
-    monkeypatch.setattr("vdch.adapters.httpx.head", fake_head)
+    monkeypatch.setattr("vdch.adapters.httpx.stream", fake_stream)
     manifest = {
         "type": "http_jsonl",
         "base_url": "https://api.example.org/records.jsonl",

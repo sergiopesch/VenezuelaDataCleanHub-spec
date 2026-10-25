@@ -9,20 +9,6 @@ from vdch.config import Settings
 from vdch.security import _decode_oidc_token
 
 
-class JwksResponse:
-    def __init__(self, payload: dict) -> None:
-        self.payload = payload
-
-    def read(self) -> bytes:
-        return json.dumps(self.payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return None
-
-
 def make_rs256_token(
     private_key,
     *,
@@ -59,10 +45,10 @@ def test_oidc_rs256_jwks_verification_and_claim_failures(monkeypatch):
         oidc_algorithms="RS256",
     )
 
-    def fake_urlopen(*_args, **_kwargs):
-        return JwksResponse({"keys": [jwk]})
+    def fake_fetch_data(_client):
+        return {"keys": [jwk]}
 
-    monkeypatch.setattr("jwt.jwks_client.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", fake_fetch_data)
 
     claims = _decode_oidc_token(settings, make_rs256_token(private_key))
     assert claims["sub"] == "user-1"

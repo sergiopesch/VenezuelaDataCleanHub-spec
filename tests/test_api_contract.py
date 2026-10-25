@@ -320,7 +320,7 @@ def test_oidc_auth_ignores_header_spoofing_for_openclaw(session, monkeypatch):
     monkeypatch.setenv("VDCH_OIDC_ISSUER", "https://issuer.example.test")
     monkeypatch.setenv("VDCH_OIDC_AUDIENCE", "vdch-api")
     monkeypatch.setenv("VDCH_OIDC_ALGORITHMS", "HS256")
-    monkeypatch.setenv("VDCH_OIDC_HS256_SECRET", "synthetic-oidc-secret")
+    monkeypatch.setenv("VDCH_OIDC_HS256_SECRET", "synthetic-oidc-secret-with-at-least-32-bytes")
     monkeypatch.setenv("VDCH_ALLOW_INSECURE_OIDC_HS256_FOR_LOCAL_DEV", "true")
     monkeypatch.setenv("VDCH_ALLOW_POLICY_BYPASS_FOR_LOCAL_DEV", "true")
     monkeypatch.setenv("VDCH_OPA_ENABLED", "false")
@@ -333,7 +333,7 @@ def test_oidc_auth_ignores_header_spoofing_for_openclaw(session, monkeypatch):
             "preferred_username": "user-1",
             "scope": "operator",
         },
-        "synthetic-oidc-secret",
+        "synthetic-oidc-secret-with-at-least-32-bytes",
         algorithm="HS256",
     )
 

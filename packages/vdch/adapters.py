@@ -144,18 +144,38 @@ def _iter_chunks(
 
 
 def _fetch_http_response(manifest: dict[str, Any], max_bytes: int) -> httpx.Response:
-    _validate_content_length(manifest["base_url"], max_bytes)
-    response = httpx.get(
+    # Bound the actual GET body. A separate HEAD response cannot establish its size.
+    headers = {**(manifest.get("headers") or {}), "Accept-Encoding": "identity"}
+    with httpx.stream(
+        "GET",
         manifest["base_url"],
         params=manifest.get("query_params") or {},
-        headers=manifest.get("headers") or {},
+        headers=headers,
         timeout=manifest.get("timeout_seconds", 30),
         follow_redirects=False,
-    )
-    response.raise_for_status()
-    if len(response.content) > max_bytes:
-        raise AdapterError("HTTP response exceeded configured maximum size")
-    return response
+    ) as response:
+        response.raise_for_status()
+        # Do not let transparent decompression allocate an unbounded decoded chunk.
+        # Compliant sources send identity because that is the encoding we request.
+        if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+            raise AdapterError("HTTP source must honor the requested identity content encoding")
+        content_length = response.headers.get("content-length")
+        try:
+            if content_length and int(content_length) > max_bytes:
+                raise AdapterError("HTTP response content length exceeded configured maximum size")
+        except ValueError:
+            pass
+        payload = bytearray()
+        for chunk in response.iter_raw(chunk_size=min(65_536, max_bytes + 1)):
+            if len(chunk) > max_bytes - len(payload):
+                raise AdapterError("HTTP response exceeded configured maximum size")
+            payload.extend(chunk)
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            content=bytes(payload),
+            request=response.request,
+        )
 
 
 def _jsonl_records(payload: str) -> Iterator[Any]:
@@ -166,21 +186,6 @@ def _jsonl_records(payload: str) -> Iterator[Any]:
             yield json.loads(line)
         except json.JSONDecodeError as exc:
             raise AdapterError(f"JSONL record {line_number} is not valid JSON") from exc
-
-
-def _validate_content_length(url: str, max_bytes: int) -> None:
-    try:
-        response = httpx.head(url, timeout=10, follow_redirects=False)
-    except httpx.HTTPError:
-        return
-    if not response.is_success:
-        return
-    content_length = response.headers.get("content-length")
-    try:
-        if content_length and int(content_length) > max_bytes:
-            raise AdapterError("HTTP response content length exceeded configured maximum size")
-    except ValueError:
-        return
 
 
 def adapter_name_for_manifest(manifest: dict[str, Any]) -> str:
